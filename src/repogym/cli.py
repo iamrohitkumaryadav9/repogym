@@ -423,7 +423,7 @@ def env_check(task_id: Annotated[str, typer.Argument(help="Task id from the rele
 @app.command()
 def run(
     agent: Annotated[str, typer.Option(help="oracle | null | cheater | baseline")],
-    split: Annotated[str, typer.Option(help="Release split (primary per-repo split).")] = "dev",
+    split: Annotated[str, typer.Option(help="train | dev | test (primary split) | all")] = "dev",
     tasks: Annotated[list[str] | None, typer.Option("--tasks", help="Only these task ids.")] = None,
     workers: Annotated[int, typer.Option(help="Parallel episodes.")] = 2,
     run_id: Annotated[str | None, typer.Option(help="Resume or name a run.")] = None,
@@ -439,7 +439,7 @@ def run(
 
     path = RELEASE_DIR / release / "tasks.jsonl"
     selected = [ReleaseTask.model_validate_json(line) for line in path.read_text().splitlines()]
-    selected = [t for t in selected if (t.task_id in tasks if tasks else t.split == split)]
+    selected = [t for t in selected if (t.task_id in tasks if tasks else split in ("all", t.split))]
     factories = {"oracle": OracleAgent, "null": NullAgent, "cheater": lambda t: CheaterAgent(t)}
     if agent == "baseline":
         from repogym.agents.baseline import make_baseline
