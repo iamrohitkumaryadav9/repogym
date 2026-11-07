@@ -342,7 +342,10 @@ class RunContext:
         return cls(
             image_ids={spec.image: image_id(spec.image) for spec in REPOS.values()},
             repogym_commit=git("rev-parse", "HEAD"),
-            repogym_dirty=bool(git("status", "--porcelain", "--untracked-files=no")),
+            # Only code counts: the data files under data/ change as validation runs.
+            repogym_dirty=bool(
+                git("status", "--porcelain", "--", "src", "pyproject.toml", "uv.lock")
+            ),
         )
 
     def provenance(self, outcome: Outcome) -> Provenance:
