@@ -18,3 +18,13 @@
 {"image": "repogym/isort:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T09:52:17.140351+00:00"}
 {"image": "repogym/tomlkit:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T09:52:21.098896+00:00"}
 {"image": "repogym/astroid:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T09:52:23.761103+00:00"}
+{"image": "repogym/click:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:07:20.417499+00:00"}
+{"image": "repogym/attrs:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:07:54.483044+00:00"}
+{"image": "repogym/isort:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:08:59.051527+00:00"}
+{"image": "repogym/tomlkit:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:09:36.631512+00:00"}
+{"image": "repogym/astroid:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:10:41.714431+00:00"}
+{"image": "repogym/click:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:13:30.328036+00:00"}
+{"image": "repogym/attrs:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:14:58.318774+00:00"}
+{"image": "repogym/isort:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:16:06.779335+00:00"}
+{"image": "repogym/tomlkit:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:16:49.652510+00:00"}
+{"image": "repogym/astroid:base", "kind": "base", "reason": "one base image per repo", "built_at": "2026-11-07T10:18:12.291110+00:00"}

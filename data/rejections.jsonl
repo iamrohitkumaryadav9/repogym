@@ -1,9 +1,5 @@
-{"task_id":"pallets__click-3505","repo":"pallets/click","reason":"check2_oracle_does_not_fix","detail":"E   ValueError: I/O operation on closed file."}
-{"task_id":"pallets__click-3499","repo":"pallets/click","reason":"check2_oracle_does_not_fix","detail":"E   ValueError: I/O operation on closed file."}
 {"task_id":"pallets__click-2991","repo":"pallets/click","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
-{"task_id":"pallets__click-2934","repo":"pallets/click","reason":"unsolved_timeout","detail":"Exceeded 300s"}
 {"task_id":"pallets__click-2729","repo":"pallets/click","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
-{"task_id":"pallets__click-2775","repo":"pallets/click","reason":"unsolved_timeout","detail":"Exceeded 300s"}
 {"task_id":"python-attrs__attrs-1385","repo":"python-attrs/attrs","reason":"no_runnable_test_files","detail":"touched: ['tests/typing_example.py']"}
 {"task_id":"python-attrs__attrs-1383","repo":"python-attrs/attrs","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"PyCQA__isort-2701","repo":"PyCQA/isort","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
@@ -13,7 +9,6 @@
 {"task_id":"PyCQA__isort-2346","repo":"PyCQA/isort","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"PyCQA__isort-2327","repo":"PyCQA/isort","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"python-poetry__tomlkit-416","repo":"python-poetry/tomlkit","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
-{"task_id":"python-poetry__tomlkit-509","repo":"python-poetry/tomlkit","reason":"unsolved_timeout","detail":"Exceeded 300s"}
 {"task_id":"python-poetry__tomlkit-402","repo":"python-poetry/tomlkit","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"python-poetry__tomlkit-353","repo":"python-poetry/tomlkit","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"python-poetry__tomlkit-349","repo":"python-poetry/tomlkit","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
@@ -22,7 +17,9 @@
 {"task_id":"pylint-dev__astroid-3121","repo":"pylint-dev/astroid","reason":"check2_oracle_does_not_fix","detail":"E   AssertionError: False is not true : Illicit type for inner (builtins.tuple)"}
 {"task_id":"pylint-dev__astroid-2930","repo":"pylint-dev/astroid","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"pylint-dev__astroid-2882","repo":"pylint-dev/astroid","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
-{"task_id":"pylint-dev__astroid-2596","repo":"pylint-dev/astroid","reason":"unsolved_out_of_memory","detail":"pytest exit -9\n..........F....."}
 {"task_id":"pylint-dev__astroid-2561","repo":"pylint-dev/astroid","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
 {"task_id":"python-attrs__attrs-1358","repo":"python-attrs/attrs","reason":"no_runnable_test_files","detail":"touched: ['tests/test_mypy.yml']"}
 {"task_id":"python-attrs__attrs-1451","repo":"python-attrs/attrs","reason":"check2_oracle_does_not_fix","detail":"E   NameError: cannot access free variable 'B' where it is not associated with a value in enclosing scope"}
+{"task_id":"pallets__click-3505","repo":"pallets/click","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
+{"task_id":"pallets__click-3499","repo":"pallets/click","reason":"check1_nothing_fails_without_fix","detail":"Every touched test already passes before the fix"}
+{"task_id":"pylint-dev__astroid-2596","repo":"pylint-dev/astroid","reason":"unsolved_out_of_memory","detail":"pytest exit -9\n..........F....."}
