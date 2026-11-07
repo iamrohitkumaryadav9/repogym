@@ -357,3 +357,43 @@ Step 1 environment and assertions, with `repogym env check` and a gold-probe swe
 tasks. Then Step 2 tools and MCP, Step 3 grading, Step 4 ATIF and episode records, Step 5 scripted
 agents on dev (fix until green), Step 6 baseline smoke test, Step 7 viewer, and Step 8 tests,
 docs and CI. I'll show real output at each step.
+
+## 12. Review outcomes (2026-11-07)
+
+Every decision was approved, with these additions. They are binding for the implementation.
+
+* **D1.** MCP server on the host, tools via `docker exec`.
+  * **Every** tool `docker exec` runs as the non-root `agent` user, never root. Root is used only
+    during setup, before the agent's first action.
+  * `view_file`, `str_replace` and `create_file` resolve paths, symlinks included, and reject
+    anything outside `/work`.
+* **D2.** A fresh grading container. The diff is extracted on the host, never through the agent's
+  git.
+* **D3.** The extended revert scope is approved, with two guards:
+  * (a) The shadowing rule reverts only files that can actually shadow an import: modules or
+    packages directly in an import root at grading time, meaning the repo root and the `src/`
+    layout root (test directories are reverted anyway). A module a fix adds anywhere else is never
+    reverted.
+  * (b) Every reverted file that isn't a test file, test config or `conftest.py` is recorded as a
+    grading flag with its path, so a false revert is visible. OracleAgent 25/25 on dev is the proof
+    that legitimate fixes survive. An oracle failure caused by a revert is a bug in the revert
+    rules.
+  * CheaterAgent also plants a `conftest.py` hook, a `sitecustomize.py`, a `.pth` file and a
+    module shadowing `pytest`.
+* **D4.** Our own provider layer. The `ChatModel` interface must make an OpenAI-compatible
+  chat-completions provider (base URL, key and model from `.env`) a single small module, for the
+  Week 3 model comparison.
+* **D5.** ATIF v1.8 with our validator in CI, cross-checked locally against Harbor 0.24.0's
+  validator. If 0.24.0 doesn't accept v1.8, we target the newest version it accepts and record why
+  here.
+* **D6.** The gold-line probe runs over all 247 tasks before it's relied on. Every hit is
+  reported, and the probe isn't relaxed without approval.
+* **D7.** Evaluate a read-only root filesystem, with `/work` and `/tmp` on size-capped tmpfs mounts
+  (around 512 MB each) and the editable install done at episode start. Measure RAM with 2 workers
+  on 7.7 GiB, the setup time, and OracleAgent's result. Adopt it only if it fits comfortably;
+  otherwise keep per-episode disk monitoring and document the limitation.
+* **Addition 1.** The "target package installed exactly once, as the editable copy at `/work`"
+  assertion covers all 5 repos and is part of `repogym env check`.
+* **Addition 2.** No task metadata may leak through the container: no task id, PR or issue
+  numbers, gold or test patch content, or split information in environment variables, the
+  hostname, container labels, or any file outside the repo. This is asserted.
