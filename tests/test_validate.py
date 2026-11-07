@@ -328,6 +328,15 @@ def test_oom_without_fix_is_rejected_when_the_oracle_is_heavy():
     assert "1100 MiB" in outcome.rejection.detail
 
 
+@pytest.mark.parametrize(
+    ("peak", "excused"),
+    [(LIMIT // 2 - 1, True), (LIMIT // 2, False), (LIMIT // 2 + 1, False), (None, False)],
+)
+def test_oom_rule_threshold_is_strictly_under_half_the_limit(peak, excused):
+    runs = [light({"m::new": P}, peak=300 * MiB), light({"m::new": P}, peak=peak)]
+    assert (v.oracle_peak_problem(runs, LIMIT) is None) is excused
+
+
 def test_oom_without_fix_is_rejected_when_oracle_peak_is_unknown():
     assert _oom_case(oracle_peak=None).rejection.reason == "unsolved_out_of_memory"
 
