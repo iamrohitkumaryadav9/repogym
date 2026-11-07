@@ -20,3 +20,5 @@ natsort
 pytest-benchmark
 stdlibs
 toml
+editables
+hatch-mypyc

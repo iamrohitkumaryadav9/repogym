@@ -13,3 +13,4 @@ hypothesis
 pympler
 pytest-xdist[psutil]
 zope.interface
+editables

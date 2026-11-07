@@ -1,5 +1,6 @@
 colorama==0.4.6 ; sys_platform == 'win32'
 coverage==7.17.2
+editables==0.6
 flit-core==4.2.0
 hatch-fancy-pypi-readme==25.1.0
 hatch-vcs==0.5.0
@@ -11,7 +12,7 @@ pip==26.3
 pluggy==1.7.0
 poetry-core==2.5.0
 pygments==2.21.0
-pytest==9.2.0
+pytest==8.4.2
 pytest-cov==7.1.0
 setuptools==81.0.0
 setuptools-scm==10.3.4

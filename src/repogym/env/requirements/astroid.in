@@ -19,3 +19,4 @@ six
 typing-extensions
 urllib3<2
 wrapt
+editables

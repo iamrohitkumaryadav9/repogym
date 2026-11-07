@@ -47,7 +47,7 @@ def main():
     with open(os.path.join(WORK, ".git/objects/info/alternates"), "w") as handle:
         handle.write(job["bare_repo"] + "/objects\n")
     for url, mirror in job["submodule_mirrors"].items():
-        sh("git", "config", "--global", f"url.file://{mirror}.insteadOf", url)
+        sh("git", "config", "--global", "--add", f"url.file://{mirror}.insteadOf", url)
 
     done = sh("git", "checkout", "--quiet", "--force", job["base_commit"])
     if done.returncode != 0:
