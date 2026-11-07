@@ -66,7 +66,11 @@ def collect() -> Stats:
     sizes = [c.changed_lines for c in candidates if c.task_id in verified_ids]
     if sizes:
         stats.median_diff_lines = statistics.median(sizes)
-    runtimes = [m.oracle_seconds for m in metrics if m.task_id in verified_ids]
+    runtimes = [
+        m.oracle_seconds
+        for m in metrics
+        if m.task_id in verified_ids and m.oracle_seconds is not None
+    ]
     if runtimes:
         stats.median_test_seconds = statistics.median(runtimes)
     return stats

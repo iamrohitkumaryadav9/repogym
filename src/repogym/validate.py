@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeVar
 
@@ -16,7 +18,10 @@ from pydantic import BaseModel
 
 from repogym.config import (
     BASELINE_PATH,
+    CONTAINER_MEMORY_BYTES,
+    OOM_ORACLE_PEAK_FRACTION,
     ORACLE_TEST_SECONDS_LIMIT,
+    PROVENANCE_PATH,
     REJECTIONS_PATH,
     RUN_METRICS_PATH,
     VERIFIED_PATH,
@@ -28,6 +33,7 @@ from repogym.mining.patches import is_runnable_test_file
 from repogym.models import (
     BaselineRecord,
     Candidate,
+    Provenance,
     Rejection,
     RunMetrics,
     RunStage,
@@ -169,6 +175,7 @@ class Outcome:
     rejection: Rejection | None
     baseline: BaselineRecord | None
     metrics: RunMetrics | None
+    pytest_version: str | None = None
 
 
 Runner = Callable[..., TestRun]
@@ -177,27 +184,60 @@ Runner = Callable[..., TestRun]
 Annotator = Callable[[Candidate], tuple[TaskType, bool, list[str]]]
 
 
+def oom_counts_as_failure(run: TestRun) -> bool:
+    """An OOM-killed run is usable only if we know which test was running when it died."""
+    return run.stage is RunStage.OOM and run.killed_test is not None
+
+
+def oracle_peak_problem(oracle_runs: list[TestRun], limit_bytes: int) -> str | None:
+    """Why an OOM before the fix can't be trusted; None if the fixed code is comfortably light."""
+    threshold = limit_bytes * OOM_ORACLE_PEAK_FRACTION
+    peaks = [run.peak_memory_bytes for run in oracle_runs]
+    if any(peak is None for peak in peaks):
+        return "oracle peak memory unknown"
+    worst = max(peak for peak in peaks if peak is not None)
+    if worst >= threshold:
+        return f"oracle peak {worst / 1024**2:.0f} MiB is not under {threshold / 1024**2:.0f} MiB"
+    return None
+
+
 def validate_candidate(
-    candidate: Candidate, runner: Runner = run_tests, annotator: Annotator | None = None
+    candidate: Candidate,
+    runner: Runner = run_tests,
+    annotator: Annotator | None = None,
+    memory_limit_bytes: int = CONTAINER_MEMORY_BYTES,
 ) -> Outcome:
     """Run the checks for one candidate, stopping at the first failure."""
     spec = get_repo(candidate.repo)
     test_files = [path for path in candidate.test_files if is_runnable_test_file(path)]
+    runs: dict[str, TestRun] = {}
+    record: BaselineRecord | None = None
 
-    def reject(reason: str, detail: str = "", baseline_record: BaselineRecord | None = None):
+    def metrics(oracle_runs: list[TestRun] | None = None) -> RunMetrics:
+        seconds = None
+        if oracle_runs:
+            seconds = sum(r.duration_seconds for r in oracle_runs) / len(oracle_runs)
+        peaks = {label: run.peak_memory_bytes for label, run in runs.items()}
+        return RunMetrics(
+            task_id=candidate.task_id, oracle_seconds=seconds, peak_memory_bytes=peaks
+        )
+
+    def reject(reason: str, detail: str = "") -> Outcome:
         rejection = Rejection(
             task_id=candidate.task_id, repo=candidate.repo, reason=reason, detail=detail[-1500:]
         )
         log.info("rejected", task=candidate.task_id, reason=reason)
-        return Outcome(candidate, None, rejection, baseline_record, None)
+        return Outcome(candidate, None, rejection, record, metrics(), _versions(runs))
 
     if not test_files:
         return reject("no_runnable_test_files", f"touched: {candidate.test_files[:5]}")
 
-    def run(patch: str, test_patch: str, **kwargs) -> TestRun:
-        return runner(spec, candidate.base_commit, patch, test_patch, test_files, **kwargs)
+    def run(label: str, patch: str, test_patch: str, **kwargs) -> TestRun:
+        result = runner(spec, candidate.base_commit, patch, test_patch, test_files, **kwargs)
+        runs[label] = result
+        return result
 
-    baseline = run("", "", require_test_files=False)
+    baseline = run("baseline", "", "", require_test_files=False)
     if baseline.stage is not RunStage.COMPLETED:
         return reject(_stage_rejection("baseline", baseline), baseline.detail)
     record = BaselineRecord(
@@ -207,47 +247,50 @@ def validate_candidate(
         collection_errors=baseline.collection_errors,
     )
 
-    oracle = run(candidate.gold_patch, candidate.test_patch)
+    oracle = run("oracle1", candidate.gold_patch, candidate.test_patch)
     if oracle.stage is not RunStage.COMPLETED:
-        return reject(_stage_rejection("oracle", oracle), oracle.detail, record)
+        return reject(_stage_rejection("oracle", oracle), oracle.detail)
 
-    # Check 1: the unsolved state must fail.
-    unsolved = run("", candidate.test_patch)
-    if unsolved.stage is not RunStage.COMPLETED:
-        return reject(_stage_rejection("unsolved", unsolved), unsolved.detail, record)
+    # Check 1: the unsolved state must fail. Running out of memory there is a failure of the
+    # test that was running, provided the oracle later proves light (checked below).
+    unsolved = run("unsolved", "", candidate.test_patch)
+    if unsolved.stage is not RunStage.COMPLETED and not oom_counts_as_failure(unsolved):
+        return reject(_stage_rejection("unsolved", unsolved), unsolved.detail)
     lists = compute_lists(baseline, unsolved, oracle)
     if not lists.fail_to_pass:
         why = explain_no_fail_to_pass(baseline, unsolved, oracle)
-        return reject(why.reason, why.detail, record)
+        return reject(why.reason, why.detail)
 
     # Check 3: an empty patch must not count as solved.
-    noop = run("", candidate.test_patch)
-    if noop.stage is not RunStage.COMPLETED:
-        return reject(_stage_rejection("noop", noop), noop.detail, record)
+    noop = run("noop", "", candidate.test_patch)
+    if noop.stage is not RunStage.COMPLETED and not oom_counts_as_failure(noop):
+        return reject(_stage_rejection("noop", noop), noop.detail)
     if is_solved(noop, lists):
-        return reject("check3_noop_counts_as_solved", "", record)
+        return reject("check3_noop_counts_as_solved")
     passing = [t for t in lists.fail_to_pass if noop.tests.get(t) is TestStatus.PASSED]
     if passing:
-        return reject(
-            "flaky_unsolved_state", f"Passed in only one no-fix run: {passing[:5]}", record
-        )
+        return reject("flaky_unsolved_state", f"Passed in only one no-fix run: {passing[:5]}")
 
     # Check 2 and flakiness: the oracle must be stable and solve every listed test.
     oracle_runs = [oracle]
-    for _ in range(ORACLE_RUNS - 1):
-        again = run(candidate.gold_patch, candidate.test_patch)
+    for index in range(2, ORACLE_RUNS + 1):
+        again = run(f"oracle{index}", candidate.gold_patch, candidate.test_patch)
         if again.stage is not RunStage.COMPLETED:
-            return reject(_stage_rejection("oracle", again), again.detail, record)
+            return reject(_stage_rejection("oracle", again), again.detail)
         oracle_runs.append(again)
     flaky = inconsistent_tests(oracle_runs)
     if flaky:
-        return reject("flaky_oracle", f"{len(flaky)} inconsistent: {flaky[:5]}", record)
+        return reject("flaky_oracle", f"{len(flaky)} inconsistent: {flaky[:5]}")
     if not all(is_solved(item, lists) for item in oracle_runs):
-        return reject("check2_oracle_does_not_fix", "Listed test failed in a repeat run", record)
+        return reject("check2_oracle_does_not_fix", "Listed test failed in a repeat run")
     slow = slow_listed_tests(oracle_runs, lists, ORACLE_TEST_SECONDS_LIMIT)
     if slow:
         detail = f"Over {ORACLE_TEST_SECONDS_LIMIT:.0f}s with the fix: {slow[:5]}"
-        return reject("oracle_too_close_to_timeout", detail, record)
+        return reject("oracle_too_close_to_timeout", detail)
+    if unsolved.stage is RunStage.OOM or noop.stage is RunStage.OOM:
+        problem = oracle_peak_problem(oracle_runs, memory_limit_bytes)
+        if problem:
+            return reject("unsolved_out_of_memory", problem)
 
     task_type, spec_clear, spec_issues = (annotator or annotate)(candidate)
 
@@ -266,17 +309,55 @@ def validate_candidate(
         spec_clear=spec_clear,
         spec_issues=spec_issues,
     )
-    metrics = RunMetrics(
-        task_id=candidate.task_id,
-        oracle_seconds=sum(r.duration_seconds for r in oracle_runs) / len(oracle_runs),
-    )
     log.info(
         "verified",
         task=candidate.task_id,
         fail_to_pass=len(lists.fail_to_pass),
         pass_to_pass=len(lists.pass_to_pass),
     )
-    return Outcome(candidate, verified, None, record, metrics)
+    return Outcome(candidate, verified, None, record, metrics(oracle_runs), _versions(runs))
+
+
+def _versions(runs: dict[str, TestRun]) -> str | None:
+    return next((run.pytest_version for run in runs.values() if run.pytest_version), None)
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Facts shared by every task in one validation run, recorded in each task's provenance."""
+
+    image_ids: dict[str, str]
+    repogym_commit: str
+    repogym_dirty: bool
+
+    @classmethod
+    def current(cls) -> RunContext:
+        from repogym.config import REPOS, ROOT
+        from repogym.env.docker import image_id
+
+        def git(*args: str) -> str:
+            done = subprocess.run(["git", *args], cwd=ROOT, text=True, capture_output=True)
+            return done.stdout.strip()
+
+        return cls(
+            image_ids={spec.image: image_id(spec.image) for spec in REPOS.values()},
+            repogym_commit=git("rev-parse", "HEAD"),
+            repogym_dirty=bool(git("status", "--porcelain", "--untracked-files=no")),
+        )
+
+    def provenance(self, outcome: Outcome) -> Provenance:
+        image = get_repo(outcome.candidate.repo).image
+        return Provenance(
+            task_id=outcome.candidate.task_id,
+            status="verified" if outcome.verified is not None else "rejected",
+            reason=outcome.rejection.reason if outcome.rejection else "",
+            docker_image=image,
+            image_id=self.image_ids.get(image, ""),
+            repogym_commit=self.repogym_commit,
+            repogym_dirty=self.repogym_dirty,
+            pytest_version=outcome.pytest_version,
+            validated_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
 
 
 class JsonlStore:
@@ -337,6 +418,7 @@ def forget_tasks(task_ids: set[str]) -> int:
     removed += rewrite_jsonl(REJECTIONS_PATH, Rejection, lambda r: r.task_id not in task_ids)
     rewrite_jsonl(BASELINE_PATH, BaselineRecord, lambda r: r.task_id not in task_ids)
     rewrite_jsonl(RUN_METRICS_PATH, RunMetrics, lambda r: r.task_id not in task_ids)
+    rewrite_jsonl(PROVENANCE_PATH, Provenance, lambda r: r.task_id not in task_ids)
     return removed
 
 
@@ -350,6 +432,7 @@ def validate_all(
     workers: int,
     runner: Runner = run_tests,
     annotator: Annotator | None = None,
+    context: RunContext | None = None,
 ) -> Counter[str]:
     """Validate candidates in parallel, recording each as it finishes.
 
@@ -361,6 +444,10 @@ def validate_all(
     rejection_store = JsonlStore(REJECTIONS_PATH)
     baseline_store = JsonlStore(BASELINE_PATH)
     metrics_store = JsonlStore(RUN_METRICS_PATH)
+    provenance_store = JsonlStore(PROVENANCE_PATH)
+    context = context or RunContext.current()
+    if context.repogym_dirty:
+        log.warning("uncommitted_changes", commit=context.repogym_commit)
 
     done = already_validated()
     pending = [c for c in candidates if c.task_id not in done]
@@ -368,6 +455,8 @@ def validate_all(
     tally: Counter[str] = Counter()
 
     def record(outcome: Outcome) -> None:
+        # Provenance goes first: a task with results but no provenance would be unauditable.
+        provenance_store.append(context.provenance(outcome))
         if outcome.baseline is not None:
             baseline_store.append(outcome.baseline)
         if outcome.metrics is not None:

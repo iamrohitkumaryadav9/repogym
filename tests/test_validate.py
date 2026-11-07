@@ -63,6 +63,11 @@ def test_inconsistent_tests_finds_status_changes_and_missing_tests():
     assert v.inconsistent_tests(runs) == ["b"]
 
 
+CONTEXT = v.RunContext(
+    image_ids={"repogym/click:base": "sha256:abc"}, repogym_commit="deadbeef", repogym_dirty=False
+)
+
+
 def fake_annotator(candidate):
     return "bug", True, []
 
@@ -192,6 +197,7 @@ def stores(tmp_path, monkeypatch):
     monkeypatch.setattr(v, "REJECTIONS_PATH", tmp_path / "r.jsonl")
     monkeypatch.setattr(v, "BASELINE_PATH", tmp_path / "b.jsonl")
     monkeypatch.setattr(v, "RUN_METRICS_PATH", tmp_path / "m.jsonl")
+    monkeypatch.setattr(v, "PROVENANCE_PATH", tmp_path / "p.jsonl")
     return tmp_path
 
 
@@ -204,9 +210,9 @@ def test_rerun_skips_finished_tasks(stores):
             return GOOD_ORACLE
         return GOOD_UNSOLVED if test_patch else run()
 
-    assert v.validate_all([_candidate()], 1, runner, fake_annotator)["verified"] == 1
+    assert v.validate_all([_candidate()], 1, runner, fake_annotator, CONTEXT)["verified"] == 1
     first = len(calls)
-    assert v.validate_all([_candidate()], 1, runner, fake_annotator)["verified"] == 0
+    assert v.validate_all([_candidate()], 1, runner, fake_annotator, CONTEXT)["verified"] == 0
     assert len(calls) == first
 
 
@@ -215,7 +221,7 @@ def test_docker_failure_records_nothing_so_rerun_retries(stores):
         raise DockerUnavailable("daemon gone")
 
     with pytest.raises(DockerUnavailable):
-        v.validate_all([_candidate()], 1, broken, fake_annotator)
+        v.validate_all([_candidate()], 1, broken, fake_annotator, CONTEXT)
     assert v.already_validated() == set()
 
 
@@ -284,3 +290,110 @@ def test_forget_tasks_removes_records_from_every_store(stores):
     v.JsonlStore(v.REJECTIONS_PATH).append(Rejection(task_id="b", repo="r", reason="x"))
     assert v.forget_tasks({"a"}) == 1
     assert v.already_validated() == {"b"}
+
+
+MiB = 1024**2
+LIMIT = 2048 * MiB
+
+
+def oom(tests, killed):
+    return TestRun(stage=RunStage.OOM, tests=tests, killed_test=killed)
+
+
+def light(tests, peak=300 * MiB):
+    return TestRun(stage=RunStage.COMPLETED, tests=tests, peak_memory_bytes=peak)
+
+
+def _oom_case(oracle_peak):
+    oracle = light({"m::new": P, "m::keep": P, "m::later": P}, peak=oracle_peak)
+    killed = oom({"m::keep": P, "m::new": F}, killed="m::new")
+    return v.validate_candidate(
+        _candidate(),
+        annotator=fake_annotator,
+        runner=scripted(run(), killed, oracle),
+        memory_limit_bytes=LIMIT,
+    )
+
+
+def test_oom_without_fix_fails_the_killed_test_when_the_oracle_is_light():
+    outcome = _oom_case(oracle_peak=400 * MiB)
+    assert outcome.verified.fail_to_pass == ["m::new"]
+    # Tests that never ran before the kill enter neither list.
+    assert outcome.verified.pass_to_pass == ["m::keep"]
+
+
+def test_oom_without_fix_is_rejected_when_the_oracle_is_heavy():
+    outcome = _oom_case(oracle_peak=1100 * MiB)  # over 50% of 2 GiB
+    assert outcome.rejection.reason == "unsolved_out_of_memory"
+    assert "1100 MiB" in outcome.rejection.detail
+
+
+def test_oom_without_fix_is_rejected_when_oracle_peak_is_unknown():
+    assert _oom_case(oracle_peak=None).rejection.reason == "unsolved_out_of_memory"
+
+
+def test_oom_with_no_progress_information_is_rejected():
+    blind = TestRun(stage=RunStage.OOM)  # e.g. the whole container was killed (exit 137)
+    outcome = v.validate_candidate(
+        _candidate(), annotator=fake_annotator, runner=scripted(run(), blind, GOOD_ORACLE)
+    )
+    assert outcome.rejection.reason == "unsolved_out_of_memory"
+
+
+def test_oom_in_the_oracle_is_never_excused():
+    outcome = v.validate_candidate(
+        _candidate(),
+        annotator=fake_annotator,
+        runner=scripted(run(), GOOD_UNSOLVED, oom({"m::new": P}, killed="m::keep")),
+    )
+    assert outcome.rejection.reason == "oracle_out_of_memory"
+
+
+def test_peak_memory_is_recorded_for_every_run():
+    outcome = _oom_case(oracle_peak=400 * MiB)
+    peaks = outcome.metrics.peak_memory_bytes
+    assert set(peaks) == {"baseline", "oracle1", "unsolved", "noop", "oracle2", "oracle3"}
+    assert peaks["oracle1"] == 400 * MiB
+
+
+def test_rejections_record_metrics_too():
+    outcome = v.validate_candidate(
+        _candidate(),
+        annotator=fake_annotator,
+        runner=scripted(run(), run({"m::new": P}), run({"m::new": P})),
+    )
+    assert outcome.rejection is not None
+    assert set(outcome.metrics.peak_memory_bytes) == {"baseline", "oracle1", "unsolved"}
+
+
+def test_provenance_is_recorded_for_verified_and_rejected_tasks(stores):
+    good = _candidate()
+    bad = good.model_copy(update={"task_id": "pallets__click-2"})
+
+    def runner(spec, base, patch, test_patch, files, **kwargs):
+        result = GOOD_UNSOLVED if test_patch and not patch else (GOOD_ORACLE if patch else run())
+        if base == "abc" and kwargs.get("require_test_files", True) is False:
+            result = result.model_copy(update={"pytest_version": "8.4.2"})
+        return result
+
+    def annotator(candidate):
+        return "bug", True, []
+
+    bad = bad.model_copy(update={"test_files": ["tests/conftest.py"]})  # nothing runnable
+    v.validate_all([good, bad], 1, runner, annotator, CONTEXT)
+    records = {r.task_id: r for r in v.read_jsonl(stores / "p.jsonl", v.Provenance)}
+    assert records["pallets__click-1"].status == "verified"
+    assert records["pallets__click-1"].image_id == "sha256:abc"
+    assert records["pallets__click-1"].repogym_commit == "deadbeef"
+    assert records["pallets__click-1"].pytest_version == "8.4.2"
+    assert records["pallets__click-1"].validated_at.endswith("+00:00")
+    assert records["pallets__click-2"].status == "rejected"
+    assert records["pallets__click-2"].reason == "no_runnable_test_files"
+
+
+def test_forget_tasks_also_drops_provenance(stores):
+    v.validate_all(
+        [_candidate()], 1, scripted(run(), GOOD_UNSOLVED, GOOD_ORACLE), fake_annotator, CONTEXT
+    )
+    v.forget_tasks({"pallets__click-1"})
+    assert v.read_jsonl(stores / "p.jsonl", v.Provenance) == []

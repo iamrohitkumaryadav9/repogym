@@ -111,6 +111,9 @@ def validate(
             help="Re-validate this task from scratch, discarding its records; repeatable."
         ),
     ] = None,
+    all_tasks: Annotated[
+        bool, typer.Option("--all", help="Re-validate every candidate from scratch.")
+    ] = False,
 ) -> None:
     """Apply the validity checks. Safe to interrupt: reruns skip finished tasks."""
     from collections import Counter
@@ -120,6 +123,8 @@ def validate(
     from repogym.validate import forget_rejections, forget_tasks, read_jsonl, validate_all
 
     check_docker()
+    if all_tasks:
+        task = [c.task_id for c in read_jsonl(CANDIDATES_PATH, Candidate)]
     if task:
         typer.echo(f"Discarded {forget_tasks(set(task))} records for {len(task)} tasks")
     if retry:
