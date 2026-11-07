@@ -83,6 +83,8 @@ class EpisodeState(BaseModel):
     started_at: str | None = None
     elapsed_seconds: float = 0.0
     total_observation_chars: int = 0
+    disk_mb: float = 0.0  # container writable layer after the last step
+    peak_disk_mb: float = 0.0
     budgets: Budgets
 
 
@@ -246,6 +248,12 @@ class Environment:
         observation = Observation(
             text=text, tool=action.tool, ok=ok, exit_code=exit_code, truncated=truncated
         )
+        if hasattr(self.sandbox, "disk_bytes"):
+            disk = round(self.sandbox.disk_bytes() / 1e6, 1)
+            self._state.disk_mb, self._state.peak_disk_mb = (
+                disk,
+                max(disk, self._state.peak_disk_mb),
+            )
         if action.tool == "submit" and not error:
             self._state.done, self._state.done_reason = True, "submitted"
         elif exhausted := self._exhausted(after_step=True):
@@ -370,6 +378,8 @@ class Environment:
             return "wall_clock"
         if self._state.total_observation_chars >= self.budgets.max_total_observation_chars:
             return "observation_chars"
+        if self._state.disk_mb > self.budgets.max_disk_mb:
+            return "disk"
         if after_step and self._state.step_count >= self.budgets.max_steps:
             return "steps"
         return None
@@ -385,7 +395,9 @@ class Environment:
         assert self.sandbox is not None
         if tool == "bash":
             limit = self._timeout(self.budgets.command_timeout_seconds)
-            done = self.sandbox.exec_agent(["bash", "-lc", args["command"]], timeout=limit)
+            fsize = self.budgets.max_file_mb * 1024  # ulimit -f counts 1 KiB blocks
+            script = f"ulimit -f {fsize}\n{args['command']}"
+            done = self.sandbox.exec_agent(["bash", "-lc", script], timeout=limit)
             return self._exec_text(done, limit)
         if tool == "run_tests":
             target = args["target"].strip()

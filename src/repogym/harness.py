@@ -69,6 +69,8 @@ class EpisodeRecord(BaseModel):
     tokens: dict[str, int | None] = Field(default_factory=dict)
     cost_usd: float | None = None
     trajectory: str | None = None
+    disk_written_mb: float | None = None  # writable layer at the end (setup included)
+    peak_disk_mb: float | None = None
 
 
 def repogym_commit() -> tuple[str, bool]:
@@ -142,6 +144,7 @@ def run_episode(
         state = env.state()
         record.done_reason = state.done_reason or ("agent_error" if record.error else None)
         record.steps = state.step_count
+        record.disk_written_mb, record.peak_disk_mb = state.disk_mb, state.peak_disk_mb
         try:
             work = env.collect()
         except Exception as exc:  # noqa: BLE001 - recorded; never turned into a reward

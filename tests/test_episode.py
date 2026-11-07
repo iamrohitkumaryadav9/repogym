@@ -306,3 +306,15 @@ def test_ordinary_work_raises_no_flags():
         ).raised()
         == []
     )
+
+
+def test_disk_budget_ends_the_episode_and_commands_get_a_file_size_limit():
+    env = env_with(Budgets(max_disk_mb=100, max_file_mb=10))
+    sizes = iter([5_000_000, 150_000_000])
+    env.sandbox.disk_bytes = lambda: next(sizes)
+    obs, done, _ = env.step(Action(tool="bash", arguments={"command": "make big"}))
+    assert not done and env.state().disk_mb == 5.0
+    script = env.sandbox.calls[-1][0][2]
+    assert script.startswith("ulimit -f 10240\n") and script.endswith("make big")
+    obs, done, info = env.step(Action(tool="bash", arguments={"command": "make bigger"}))
+    assert done and info["done_reason"] == "budget:disk" and env.state().peak_disk_mb == 150.0

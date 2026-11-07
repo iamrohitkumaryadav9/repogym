@@ -434,6 +434,14 @@ class Sandbox:
 
     # -- helpers -----------------------------------------------------------------------------
 
+    def disk_bytes(self) -> int:
+        """Bytes in the container's writable layer (everything written since the image)."""
+        done = _docker("inspect", "--size", "--format", "{{.SizeRw}}", self.name, check=False)
+        try:
+            return int(done.stdout.decode().strip())
+        except ValueError:
+            return 0
+
     def changed_paths(self) -> set[str]:
         out = _docker("diff", self.name).stdout.decode().splitlines()
         return {line[2:] for line in out if len(line) > 2}

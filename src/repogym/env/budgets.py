@@ -13,6 +13,12 @@ class Budgets(BaseModel):
     run_tests_timeout_seconds: float = 300
     max_observation_chars: int = 10_000
     max_cost_usd: float | None = None
+    # Disk: the container's writable layer is measured after every step (docker inspect --size,
+    # ~0.06 s); over the cap ends the episode. Each command also has a per-file size limit, so
+    # one command can't fill the disk before the next check. (A read-only root was evaluated
+    # and rejected: see docs/design/week2_environment.md, D7.)
+    max_disk_mb: int = 2048
+    max_file_mb: int = 1024
 
 
 def truncate(text: str, limit: int) -> tuple[str, bool]:
