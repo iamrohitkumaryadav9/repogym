@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.11 and locked dependencies
+        run: |
+          uv python install 3.11
+          uv sync --locked --python 3.11
+
+      - name: Lint
+        run: |
+          uv run --no-sync ruff check src tests
+          uv run --no-sync ruff format --check src tests
+
+      # Unit tests use mocked Docker and a fake Gemini transport. The network is cut off for
+      # this step (unshare -rn) and DOCKER_HOST points nowhere, so a test that reached either
+      # would fail rather than pass by accident. No secrets are available to this job.
+      - name: Unit tests (no network, no Docker)
+        env:
+          DOCKER_HOST: unix:///nonexistent.sock
+        run: unshare -rn .venv/bin/python -m pytest -q -p no:cacheprovider
