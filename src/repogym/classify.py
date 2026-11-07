@@ -14,7 +14,7 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel
 
-from repogym.llm import GeminiClient, LLMRequestError, LLMUnavailable
+from repogym.llm import GeminiClient, LLMBadResponse, LLMRequestError, LLMUnavailable
 from repogym.models import Candidate, TaskType
 from repogym.tasktype import TaskTypeClassifier
 
@@ -81,6 +81,8 @@ class TaskTypeLabel(BaseModel):
     rationale: str = ""
     model: str | None = None
     prompt_version: str = PROMPT_VERSION
+    finish_reason: str | None = None
+    cached: bool = False
     error: str = ""
     labelled_at: str
 
@@ -132,38 +134,67 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def classify(candidate: Candidate, client: GeminiClient) -> TaskTypeLabel:
-    """Label one task. Malformed output gets one fresh retry, then the task is "unknown"."""
+def cache_key(candidate: Candidate) -> str:
+    return f"{PROMPT_VERSION}\n{build_prompt(candidate)}"
+
+
+def classify(candidate: Candidate, client: GeminiClient, refresh: bool = False) -> TaskTypeLabel:
+    """Label one task, or mark it "unknown" with the error. Never guesses a label.
+
+    Malformed JSON and incomplete answers (no candidates, empty text, finishReason other than
+    STOP) get one fresh, uncached retry. Nothing that fails validation is ever cached.
+    """
     prompt = build_prompt(candidate)
-    key = f"{PROMPT_VERSION}\n{prompt}"
+    key = cache_key(candidate)
+
+    def unknown(error: str) -> TaskTypeLabel:
+        log.warning("classify_failed", task=candidate.task_id, error=error)
+        return TaskTypeLabel(
+            task_id=candidate.task_id, task_type="unknown", error=error, labelled_at=_now()
+        )
+
     error = ""
     for attempt in range(2):
         try:
-            completion = client.complete(prompt, key, GENERATION_CONFIG, use_cache=attempt == 0)
-        except (LLMUnavailable, LLMRequestError) as exc:
-            log.warning("classify_failed", task=candidate.task_id, error=str(exc))
-            return TaskTypeLabel(
-                task_id=candidate.task_id, task_type="unknown", error=str(exc), labelled_at=_now()
+            completion = client.complete(
+                prompt,
+                key,
+                GENERATION_CONFIG,
+                use_cache=attempt == 0 and not refresh,
+                validate=parse_label,
             )
-        try:
-            label = parse_label(completion.text)
-        except MalformedOutput as exc:
-            # Never keep a bad answer in the cache, or reruns would replay it.
-            client.forget(completion.model, key)
-            error = f"malformed output from {completion.model}: {exc}"
-            log.warning("classify_malformed", task=candidate.task_id, attempt=attempt + 1)
+            label = parse_label(completion.text)  # cache hits are re-checked too
+        except (MalformedOutput, LLMBadResponse) as exc:
+            # A bad cache entry (if that's where it came from) must not be replayed.
+            for model in {client.settings.model, client.settings.fallback_model}:
+                hit = client.cached(model, key)
+                if hit is not None and _invalid(hit.text):
+                    client.forget(model, key)
+            error = f"{type(exc).__name__}: {exc}"
+            log.warning("classify_bad_output", task=candidate.task_id, attempt=attempt + 1,
+                        error=error)  # fmt: skip
             continue
+        except (LLMUnavailable, LLMRequestError) as exc:
+            return unknown(str(exc))
         return TaskTypeLabel(
             task_id=candidate.task_id,
             task_type=label.task_type,
             confidence=label.confidence,
             rationale=label.rationale,
             model=completion.model,
+            finish_reason=completion.finish_reason,
+            cached=completion.cached,
             labelled_at=_now(),
         )
-    return TaskTypeLabel(
-        task_id=candidate.task_id, task_type="unknown", error=error, labelled_at=_now()
-    )
+    return unknown(f"bad output twice; last: {error}")
+
+
+def _invalid(text: str) -> bool:
+    try:
+        parse_label(text)
+    except MalformedOutput:
+        return True
+    return False
 
 
 def make_classifier(client: GeminiClient) -> TaskTypeClassifier:

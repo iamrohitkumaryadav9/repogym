@@ -45,6 +45,11 @@ class LLMRequestError(RuntimeError):
     """A non-retryable error, such as a bad request or a rejected key."""
 
 
+class LLMBadResponse(LLMRequestError):
+    """HTTP 200 but no usable answer: no candidates, empty text, or a finishReason other than
+    STOP (SAFETY, MAX_TOKENS, RECITATION, ...), which means the text may be partial."""
+
+
 @dataclass(frozen=True)
 class Settings:
     api_key: str = field(repr=False)
@@ -69,6 +74,14 @@ class Completion:
     text: str
     model: str
     cached: bool
+    finish_reason: str | None = None  # None only for cache entries written before it was kept
+
+
+@dataclass(frozen=True)
+class CacheProblem:
+    path: Path
+    model: str | None
+    problem: str
 
 
 def backoff_delays(attempts: int = MAX_ATTEMPTS, base: float = BASE_DELAY_SECONDS) -> list[float]:
@@ -133,17 +146,20 @@ class GeminiClient:
         digest = hashlib.sha256(f"{model}\n{key}".encode()).hexdigest()
         return self._cache_dir / digest[:2] / f"{digest}.json"
 
-    def cached(self, model: str, key: str) -> str | None:
+    def cached(self, model: str, key: str) -> Completion | None:
         path = self._cache_path(model, key)
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))["text"]
+            entry = json.loads(path.read_text(encoding="utf-8"))
+            return Completion(entry["text"], model, cached=True,
+                              finish_reason=entry.get("finish_reason"))  # fmt: skip
         return None
 
-    def store(self, model: str, key: str, text: str) -> None:
+    def store(self, model: str, key: str, text: str, finish_reason: str) -> None:
         path = self._cache_path(model, key)
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(".tmp")
-        temp.write_text(json.dumps({"model": model, "text": text}), encoding="utf-8")
+        entry = {"model": model, "finish_reason": finish_reason, "text": text}
+        temp.write_text(json.dumps(entry), encoding="utf-8")
         temp.replace(path)
 
     def forget(self, model: str, key: str) -> None:
@@ -162,7 +178,9 @@ class GeminiClient:
             },
         )
 
-    def _call_with_retries(self, model: str, prompt: str, generation_config: dict) -> str:
+    def _call_with_retries(
+        self, model: str, prompt: str, generation_config: dict
+    ) -> tuple[str, str]:
         delays = backoff_delays()
         for attempt in range(MAX_ATTEMPTS):
             self._throttle.wait()
@@ -184,33 +202,82 @@ class GeminiClient:
                 self._sleep(wait)
         raise LLMUnavailable(f"{model}: {MAX_ATTEMPTS} attempts failed")
 
-    def complete(self, prompt: str, cache_key: str, generation_config: dict,
-                 use_cache: bool = True) -> Completion:  # fmt: skip
+    def _fresh(self, model: str, prompt: str, cache_key: str, generation_config: dict,
+               validate: Callable[[str], object] | None) -> Completion:  # fmt: skip
+        text, finish_reason = self._call_with_retries(model, prompt, generation_config)
+        if validate is not None:
+            validate(text)  # raises before anything is cached
+        self.store(model, cache_key, text, finish_reason)
+        return Completion(text, model, cached=False, finish_reason=finish_reason)
+
+    def complete(
+        self,
+        prompt: str,
+        cache_key: str,
+        generation_config: dict,
+        use_cache: bool = True,
+        validate: Callable[[str], object] | None = None,
+    ) -> Completion:
         """Primary model first (cache, then API); the fallback only once the primary is exhausted.
 
-        A rerun always tries the primary again before reusing a fallback answer, so items that
-        needed the fallback move back to the primary model as soon as it is available.
+        Only answers that pass ``validate`` (and finished with STOP) are cached. A rerun always
+        tries the primary again before reusing a fallback answer. When the fallback is the same
+        model as the primary there is no second round.
         """
         primary, fallback = self.settings.model, self.settings.fallback_model
-        if use_cache and (text := self.cached(primary, cache_key)) is not None:
-            return Completion(text, primary, cached=True)
+        if use_cache and (hit := self.cached(primary, cache_key)) is not None:
+            return hit
         try:
-            text = self._call_with_retries(primary, prompt, generation_config)
-            self.store(primary, cache_key, text)
-            return Completion(text, primary, cached=False)
+            return self._fresh(primary, prompt, cache_key, generation_config, validate)
         except LLMUnavailable:
+            if fallback == primary:
+                raise
             log.warning("llm_fallback", primary=primary, fallback=fallback)
-        if use_cache and (text := self.cached(fallback, cache_key)) is not None:
-            return Completion(text, fallback, cached=True)
-        text = self._call_with_retries(fallback, prompt, generation_config)
-        self.store(fallback, cache_key, text)
-        return Completion(text, fallback, cached=False)
+        if use_cache and (hit := self.cached(fallback, cache_key)) is not None:
+            return hit
+        return self._fresh(fallback, prompt, cache_key, generation_config, validate)
+
+    def audit_cache(self, validate: Callable[[str], object]) -> tuple[int, list[CacheProblem]]:
+        """Check every cache entry: readable, STOP (or unrecorded), and passes ``validate``."""
+        paths = sorted(self._cache_dir.rglob("*.json"))
+        problems = []
+        for path in paths:
+            model = None
+            try:
+                entry = json.loads(path.read_text(encoding="utf-8"))
+                model = entry.get("model")
+                if entry.get("finish_reason") not in (None, "STOP"):
+                    raise ValueError(f"finishReason {entry['finish_reason']}")
+                if not str(entry.get("text", "")).strip():
+                    raise ValueError("empty text")
+                validate(entry["text"])
+            except Exception as exc:  # noqa: BLE001 - any failure makes the entry unusable
+                problems.append(CacheProblem(path, model, f"{type(exc).__name__}: {exc}"))
+        problems += [CacheProblem(p, None, "leftover temp file")
+                     for p in self._cache_dir.rglob("*.tmp")]  # fmt: skip
+        return len(paths), problems
 
 
-def _extract_text(response: httpx.Response) -> str:
+def _extract_text(response: httpx.Response) -> tuple[str, str]:
+    """The answer text and its finishReason; anything short of a complete answer raises."""
     try:
         data = response.json()
-        parts = data["candidates"][0]["content"]["parts"]
-        return "".join(part.get("text", "") for part in parts)
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
-        raise LLMRequestError(f"Unexpected response shape: {type(exc).__name__}") from exc
+    except ValueError as exc:
+        raise LLMBadResponse("response is not JSON") from exc
+    candidates = data.get("candidates") if isinstance(data, dict) else None
+    if not candidates:
+        blocked = (data.get("promptFeedback") or {}).get("blockReason") if data else None
+        raise LLMBadResponse(f"no candidates (blockReason {blocked})" if blocked
+                             else "no candidates")  # fmt: skip
+    candidate = candidates[0]
+    finish_reason = candidate.get("finishReason")
+    if finish_reason != "STOP":
+        raise LLMBadResponse(f"finishReason {finish_reason}")
+    try:
+        parts = candidate["content"]["parts"]
+        text = "".join(part.get("text", "") for part in parts)
+    except (KeyError, TypeError) as exc:
+        raise LLMBadResponse(f"unexpected response shape: {type(exc).__name__}") from exc
+    if not text.strip():
+        raise LLMBadResponse("empty text")
+    return text, finish_reason

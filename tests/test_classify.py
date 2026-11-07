@@ -17,6 +17,7 @@ from repogym.classify import (
 )
 from repogym.llm import (
     GeminiClient,
+    LLMBadResponse,
     LLMRequestError,
     LLMUnavailable,
     MissingSettings,
@@ -30,8 +31,9 @@ SETTINGS = Settings(api_key="test-key-not-real", model="primary-m", fallback_mod
 GOOD = json.dumps({"task_type": "bug", "confidence": 0.9, "rationale": "Fixes a crash."})
 
 
-def gemini_response(text, status=200):
-    body = {"candidates": [{"content": {"parts": [{"text": text}]}}]} if status == 200 else {}
+def gemini_response(text, status=200, finish_reason="STOP"):
+    candidate = {"content": {"parts": [{"text": text}]}, "finishReason": finish_reason}
+    body = {"candidates": [candidate]} if status == 200 else {"error": {"code": status}}
     return httpx.Response(status, json=body)
 
 
@@ -202,7 +204,7 @@ def test_malformed_output_is_retried_once_uncached(tmp_path):
 def test_malformed_twice_marks_unknown_and_caches_nothing(tmp_path):
     c = client(tmp_path, {"primary-m": ["garbage", "{}"]})
     label = classify(_candidate(), c)
-    assert label.task_type == "unknown" and "malformed" in label.error
+    assert label.task_type == "unknown" and "MalformedOutput" in label.error
     assert not list(tmp_path.rglob("*.json"))
 
 
@@ -242,6 +244,136 @@ def test_prompt_contains_inputs_and_truncates_long_bodies():
 
 def test_truncate_keeps_short_bodies():
     assert truncate_body("short\n\n\n\nbody") == "short\n\nbody"
+
+
+# -- incomplete answers and cache hygiene -----------------------------------------------------
+
+
+def cache_files(path):
+    return list(path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("status", [429, 500, 503, 400, 403])
+def test_error_responses_are_never_cached(tmp_path, status):
+    c = client(tmp_path, {"primary-m": [gemini_response("", status)] * 5,
+                          "fallback-m": [gemini_response("", status)] * 5})  # fmt: skip
+    with pytest.raises((LLMUnavailable, LLMRequestError)):
+        c.complete("p", "k", {})
+    assert cache_files(tmp_path) == []
+
+
+@pytest.mark.parametrize("reason", ["SAFETY", "MAX_TOKENS", "RECITATION", "OTHER", None])
+def test_non_stop_finish_reason_is_a_failure_even_with_valid_text(tmp_path, reason):
+    c = client(tmp_path, {"primary-m": [gemini_response(GOOD, finish_reason=reason)]})
+    with pytest.raises(LLMBadResponse, match="finishReason"):
+        c.complete("p", "k", {})
+    assert cache_files(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"candidates": []},
+        {"promptFeedback": {"blockReason": "SAFETY"}},
+        {"candidates": [{"content": {"parts": [{"text": "  "}]}, "finishReason": "STOP"}]},
+        {"candidates": [{"finishReason": "STOP"}]},
+    ],
+)
+def test_missing_candidates_or_empty_text_is_a_failure(tmp_path, body):
+    c = client(tmp_path, {"primary-m": [httpx.Response(200, json=body)]})
+    with pytest.raises(LLMBadResponse):
+        c.complete("p", "k", {})
+
+
+def test_truncated_answer_marks_unknown_never_a_guess(tmp_path):
+    partial = '{"task_type": "bug", "confidence": 0.9, "rati'
+    c = client(tmp_path, {"primary-m": [gemini_response(partial, finish_reason="MAX_TOKENS"),
+                                        gemini_response(partial, finish_reason="MAX_TOKENS")]})  # fmt: skip
+    label = classify(_candidate(), c)
+    assert label.task_type == "unknown" and label.confidence is None and label.model is None
+    assert "MAX_TOKENS" in label.error
+    assert cache_files(tmp_path) == []
+
+
+def test_safety_block_then_good_answer_is_used(tmp_path):
+    c = client(tmp_path, {"primary-m": [gemini_response("", finish_reason="SAFETY"), GOOD]})
+    label = classify(_candidate(), c)
+    assert label.task_type == "bug" and label.finish_reason == "STOP"
+
+
+def test_schema_invalid_answer_is_not_cached_even_briefly(tmp_path):
+    seen = []
+
+    def check(text):
+        seen.append(cache_files(tmp_path))
+        return parse_label(text)
+
+    c = client(tmp_path, {"primary-m": ["garbage"]})
+    with pytest.raises(MalformedOutput):
+        c.complete("p", "k", {}, validate=check)
+    assert seen == [[]] and cache_files(tmp_path) == []
+
+
+def test_exhausted_retries_on_every_model_mark_unknown(tmp_path):
+    c = client(tmp_path, {"primary-m": [gemini_response("", 429)] * 5,
+                          "fallback-m": [gemini_response("", 503)] * 5})  # fmt: skip
+    label = classify(_candidate(), c)
+    assert label.task_type == "unknown" and label.confidence is None
+    assert "5 attempts failed" in label.error
+    assert c._transport.calls == ["primary-m"] * 5 + ["fallback-m"] * 5
+
+
+def test_same_primary_and_fallback_is_not_retried_twice(tmp_path):
+    same = Settings(api_key="test-key-not-real", model="only-m", fallback_model="only-m")
+    transport = FakeTransport({"only-m": [gemini_response("", 503)] * 5})
+    c = GeminiClient(same, interval=0, cache_dir=tmp_path, transport=transport,
+                     sleep=lambda s: None, rng=random.Random(0))  # fmt: skip
+    with pytest.raises(LLMUnavailable):
+        c.complete("p", "k", {})
+    assert transport.calls == ["only-m"] * 5
+
+
+def test_cache_records_finish_reason_and_audit_flags_bad_entries(tmp_path):
+    c = client(tmp_path, {"primary-m": [GOOD]})
+    c.complete("p", "good", {}, validate=parse_label)
+    c.store("primary-m", "bad", "not json", "STOP")
+    c.store("primary-m", "blocked", GOOD, "SAFETY")
+    assert c.cached("primary-m", "good").finish_reason == "STOP"
+    total, problems = c.audit_cache(parse_label)
+    assert total == 3
+    assert sorted(p.problem.split(":")[0] for p in problems) == ["MalformedOutput", "ValueError"]
+
+
+def test_bad_cache_entry_is_dropped_and_refetched(tmp_path):
+    c = client(tmp_path, {"primary-m": [GOOD]})
+    c.store("primary-m", __import__("repogym.classify").classify.cache_key(_candidate()),
+            "garbage", "STOP")  # fmt: skip
+    label = classify(_candidate(), c)
+    assert label.task_type == "bug" and not label.cached
+    assert c._transport.calls == ["primary-m"]
+
+
+def test_requests_are_deterministic_temperature_zero(tmp_path):
+    from repogym.classify import GENERATION_CONFIG
+
+    seen = []
+    transport = FakeTransport({"primary-m": [GOOD]})
+
+    def recording(model, prompt, config):
+        seen.append(config)
+        return transport(model, prompt, config)
+
+    c = GeminiClient(SETTINGS, interval=0, cache_dir=tmp_path, transport=recording,
+                     sleep=lambda s: None)  # fmt: skip
+    classify(_candidate(), c)
+    assert seen == [GENERATION_CONFIG] and GENERATION_CONFIG["temperature"] == 0
+
+
+def test_refresh_bypasses_the_cache(tmp_path):
+    c = client(tmp_path, {"primary-m": [GOOD, GOOD]})
+    classify(_candidate(), c)
+    label = classify(_candidate(), c, refresh=True)
+    assert not label.cached and c._transport.calls == ["primary-m", "primary-m"]
 
 
 # -- metrics ---------------------------------------------------------------------------------
