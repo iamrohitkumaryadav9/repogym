@@ -467,6 +467,39 @@ def run(
         is_oracle=agent == "oracle",
         on_done=show,
     )
+    if agent in ("oracle", "null", "cheater"):
+        from repogym.expectations import summarise
+
+        ok, problems = summarise(run_dir, agent, {t.task_id: t for t in selected})
+        typer.echo(f"{agent}: {ok}/{len(selected)} episodes met every expectation")
+        for problem in problems:
+            typer.echo(f"  EXPECTATION FAILED  {problem}")
+
+
+@app.command()
+def view(port: Annotated[int, typer.Option(help="Port on 127.0.0.1.")] = 8765) -> None:
+    """Browse runs and replay trajectories in a local web viewer."""
+    from repogym.viewer import serve
+
+    server = serve(port)
+    typer.echo(f"RepoGym viewer on http://127.0.0.1:{port}  (Ctrl+C to stop)")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.server_close()
+
+
+@app.command()
+def mcp(
+    task: Annotated[str, typer.Option(help="Task id from the release.")],
+    run_id: Annotated[str, typer.Option(help="Run directory under data/runs/.")] = "mcp",
+) -> None:
+    """Serve one task's tools over MCP (stdio) for any MCP-capable agent; graded on submit."""
+    from repogym.env.budgets import Budgets
+    from repogym.harness import RUNS_DIR
+    from repogym.tools.mcp_server import serve_task
+
+    serve_task(task, RUNS_DIR / run_id, Budgets())
 
 
 @app.command("llm-audit")
