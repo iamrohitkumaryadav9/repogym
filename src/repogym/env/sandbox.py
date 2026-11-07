@@ -159,6 +159,7 @@ class Sandbox:
         spec: RepoSpec,
         base_commit: str,
         needles: Needles,
+        bundle_checks: list | None = None,
         memory: str = CONTAINER_MEMORY,
         cpus: str = "2",
     ) -> None:
@@ -170,6 +171,10 @@ class Sandbox:
         self.name = f"repogym-ep-{secrets.token_hex(6)}"
         self.hostname = secrets.token_hex(6)
         self.started = False
+        # Host-side checks of the exact bundle copied into the container (the gold-patch
+        # probe), so the task data they need never enters the container.
+        self.bundle_checks = bundle_checks or []
+        self._bundle_results: list[Check] = []
 
     # -- lifecycle ---------------------------------------------------------------------------
 
@@ -211,6 +216,7 @@ class Sandbox:
                     f"container {result['history']['commits']} commits",
                 )
             )
+            report.checks += self._bundle_results
             report.checks.append(
                 Check(
                     "no_other_copies",
@@ -281,6 +287,7 @@ class Sandbox:
         with tempfile.TemporaryDirectory(prefix="repogym-ep-") as tmp:
             bundle = make_bundle(self.spec.bare_path, self.base_commit, Path(tmp) / "repo.bundle")
             digest = commit_set_digest(bundle_commits(bundle))
+            self._bundle_results = [check(bundle) for check in self.bundle_checks]
             _docker("cp", str(bundle), f"{self.name}:/tmp/repo.bundle")
             submodules = []
             for i, (path, pin) in enumerate(submodule_pins(self.spec.bare_path, self.base_commit)):

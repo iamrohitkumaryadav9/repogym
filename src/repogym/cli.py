@@ -15,6 +15,7 @@ from repogym.config import (
     DOCKER_BUDGET_BYTES,
     MINING_REPORT_PATH,
     REJECTIONS_PATH,
+    RELEASE_DIR,
     REPOS,
     VERIFIED_PATH,
     get_repo,
@@ -390,6 +391,82 @@ def classify_consensus(
     for line in summarize(results):
         typer.echo(line)
     typer.echo(f"{client.requests} API requests this session; runs in {TASK_TYPE_RUNS_PATH}")
+
+
+env_app = typer.Typer(help="Episode environment commands.")
+app.add_typer(env_app, name="env")
+
+
+@env_app.command("check")
+def env_check(task_id: Annotated[str, typer.Argument(help="Task id from the release")]) -> None:
+    """Set up an episode for a task and run every leakage assertion, then tear it down."""
+    from repogym.env.environment import Environment, load_task
+    from repogym.env.sandbox import EnvSetupError
+
+    env = Environment(load_task(task_id))
+    try:
+        env.reset()
+    except EnvSetupError as exc:
+        typer.echo(f"FAILED: {task_id}\n{exc}")
+        raise typer.Exit(1) from exc
+    finally:
+        env.close()
+    assert env.setup_report is not None
+    for check in env.setup_report.checks:
+        typer.echo(f"  {'PASS' if check.ok else 'FAIL'}  {check.name:28} {check.detail[:110]}")
+    typer.echo(
+        f"OK: {task_id}, {len(env.setup_report.checks)} checks passed in "
+        f"{env.setup_report.seconds} s; container removed"
+    )
+
+
+@app.command()
+def run(
+    agent: Annotated[str, typer.Option(help="oracle | null | cheater | baseline")],
+    split: Annotated[str, typer.Option(help="Release split (primary per-repo split).")] = "dev",
+    tasks: Annotated[list[str] | None, typer.Option("--tasks", help="Only these task ids.")] = None,
+    workers: Annotated[int, typer.Option(help="Parallel episodes.")] = 2,
+    run_id: Annotated[str | None, typer.Option(help="Resume or name a run.")] = None,
+    release: Annotated[str, typer.Option(help="Release version.")] = "v0.1",
+) -> None:
+    """Run an agent on a split; writes data/runs/<run_id>/ (episodes.jsonl + ATIF trajectories)."""
+    from datetime import UTC, datetime
+
+    from repogym.agents.scripted import CheaterAgent, NullAgent, OracleAgent
+    from repogym.env.budgets import Budgets
+    from repogym.harness import RUNS_DIR, run_many
+    from repogym.release import ReleaseTask
+
+    path = RELEASE_DIR / release / "tasks.jsonl"
+    selected = [ReleaseTask.model_validate_json(line) for line in path.read_text().splitlines()]
+    selected = [t for t in selected if (t.task_id in tasks if tasks else t.split == split)]
+    factories = {"oracle": OracleAgent, "null": NullAgent, "cheater": lambda t: CheaterAgent(t)}
+    if agent == "baseline":
+        from repogym.agents.baseline import make_baseline
+
+        factories["baseline"] = make_baseline()
+    if agent not in factories:
+        typer.echo(f"unknown agent {agent!r}")
+        raise typer.Exit(1)
+    run_id = run_id or f"{agent}-{split}-{datetime.now(UTC):%Y%m%dT%H%M%S}"
+    run_dir = RUNS_DIR / run_id
+    typer.echo(f"run {run_id}: {len(selected)} tasks, {workers} workers -> {run_dir}")
+
+    def show(record) -> None:
+        typer.echo(
+            f"  {record.task_id:34} {record.status:12} reward={record.reward} "
+            f"steps={record.steps} flags={','.join(record.flags_raised) or '-'}"
+        )
+
+    run_many(
+        selected,
+        factories[agent],
+        run_dir,
+        Budgets(),
+        workers=workers,
+        is_oracle=agent == "oracle",
+        on_done=show,
+    )
 
 
 @app.command("llm-audit")
