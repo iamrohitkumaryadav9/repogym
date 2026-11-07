@@ -401,12 +401,24 @@ def calibrate() -> None:
 @app.command()
 def release(
     version: Annotated[str, typer.Argument(help="Release name, e.g. v0.1")],
+    dry_run: Annotated[
+        bool, typer.Option(help="Build and validate in a temp dir; write nothing to data/release.")
+    ] = False,
 ) -> None:
     """Freeze verified tasks into data/release/<version>/ with time-based splits."""
-    from repogym.release_build import build_release
+    from repogym.release_build import ReleaseError, build_release
 
-    manifest = build_release(version)
+    try:
+        manifest, problems = build_release(version, dry_run=dry_run)
+    except (ReleaseError, FileExistsError) as exc:
+        typer.echo(f"Release refused: {exc}")
+        raise typer.Exit(1) from exc
     typer.echo(json.dumps(manifest, indent=2))
+    if dry_run:
+        status = "valid" if not problems else f"{len(problems)} problems: {problems}"
+        typer.echo(f"Dry run: built in a temp dir and removed; release {status}. Nothing written.")
+        if problems:
+            raise typer.Exit(1)
 
 
 if __name__ == "__main__":
