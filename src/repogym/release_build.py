@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -22,7 +23,14 @@ from repogym.config import (
 from repogym.consensus import MIN_CONFIDENCE, RUNS, decide, latest_runs
 from repogym.labels import final_label, human_labels
 from repogym.models import Candidate, Provenance, VerifiedTask
-from repogym.release import ReleaseTask, assign_splits, validate_release, write_release
+from repogym.release import (
+    ReleaseTask,
+    assign_splits,
+    assign_splits_per_repo,
+    sha256_file,
+    validate_release,
+    write_release,
+)
 from repogym.validate import read_jsonl
 
 
@@ -52,13 +60,61 @@ def uncommitted_inputs() -> str:
     ).stdout.strip()  # fmt: skip
 
 
+VALIDATED_DATA = (
+    "data/tasks_verified.jsonl",
+    "data/rejections.jsonl",
+    "data/baseline_failures.jsonl",
+    "data/run_metrics.jsonl",
+    "data/provenance.jsonl",
+)
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+
+
+def commit_record(validation_commits: list[str], release_commit: str) -> dict:
+    """Which commit validated the data, which built the release, and whether the data moved.
+
+    The validated data files must be byte-identical to the commit that last wrote them, and
+    the code diff since validation is summarised, so a reader can see that code changed after
+    validation (labelling, release tooling) while the validated data did not.
+    """
+    data_commit = _git("log", "-1", "--format=%H", "--", *VALIDATED_DATA)
+    files = {}
+    unchanged = True
+    for path in VALIDATED_DATA:
+        current = sha256_file(ROOT / path)
+        blob = subprocess.run(["git", "show", f"{data_commit}:{path}"], cwd=ROOT,
+                              capture_output=True, check=True).stdout  # fmt: skip
+        unchanged &= hashlib.sha256(blob).hexdigest() == current
+        files[path] = current
+    changed_code = {
+        commit: _git("diff", "--name-only", f"{commit}..{release_commit}", "--", "src").splitlines()
+        for commit in validation_commits
+    }
+    return {
+        "validation": validation_commits,
+        "release": release_commit,
+        "validated_data_commit": data_commit,
+        "validated_data_unchanged_since_that_commit": unchanged,
+        "validated_data_sha256": files,
+        "code_files_changed_since_validation": {c: len(f) for c, f in changed_code.items()},
+        "note": "Tasks were validated at the 'validation' commit. Later commits changed "
+        "labelling and release code only; the validated data files are byte-identical to "
+        "'validated_data_commit'.",
+    }
+
+
 def _git_head() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
     ).stdout.strip()
 
 
-def assemble() -> tuple[list[ReleaseTask], object, dict[str, str], dict]:
+def assemble() -> tuple[list[ReleaseTask], tuple, dict[str, str], dict]:
     tasks = read_jsonl(VERIFIED_PATH, VerifiedTask)
     candidates = {c.task_id: c for c in read_jsonl(CANDIDATES_PATH, Candidate)}
     provenance = {p.task_id: p for p in read_jsonl(PROVENANCE_PATH, Provenance)}
@@ -75,7 +131,9 @@ def assemble() -> tuple[list[ReleaseTask], object, dict[str, str], dict]:
         {r.model for c in consensus.values() if c.outcome == "applied" for r in c.runs if r.model}
     )
 
-    split = assign_splits({t.task_id: candidates[t.task_id].merged_at for t in tasks})
+    merged = {t.task_id: candidates[t.task_id].merged_at for t in tasks}
+    primary = assign_splits_per_repo(merged, {t.task_id: t.repo for t in tasks})
+    global_split = assign_splits(merged)
     released = []
     for task in tasks:
         c = candidates[task.task_id]
@@ -96,7 +154,8 @@ def assemble() -> tuple[list[ReleaseTask], object, dict[str, str], dict]:
                 spec_clear=label.spec_clear,
                 spec_clear_source=label.spec_clear_source,
                 spec_check_clear=task.spec_clear,
-                split=split.splits[task.task_id],
+                split=primary.splits[task.task_id],
+                split_global=global_split.splits[task.task_id],
                 merged_at=c.merged_at,
                 created_at=c.created_at,
                 pr_url=f"{base}/pull/{c.pr_number}",
@@ -105,7 +164,9 @@ def assemble() -> tuple[list[ReleaseTask], object, dict[str, str], dict]:
         )
     unknown = [t.task_id for t in tasks if t.task_type == "unknown"]
     extra = {
-        "validated_with_commits": sorted({provenance[t.task_id].repogym_commit for t in tasks}),
+        "commits": commit_record(
+            sorted({provenance[t.task_id].repogym_commit for t in tasks}), _git_head()
+        ),
         "classifier": {
             "models": classifier_models,
             "prompt_version": PROMPT_VERSION,
@@ -120,7 +181,7 @@ def assemble() -> tuple[list[ReleaseTask], object, dict[str, str], dict]:
             "spec_clear": "human (adjudicated) > heuristic",
         },
     }
-    return released, split, image_ids, extra
+    return released, (primary, global_split), image_ids, extra
 
 
 def _outcomes(results: list) -> dict[str, int]:
@@ -135,18 +196,22 @@ def build_release(version: str, dry_run: bool = False) -> tuple[dict, list[str]]
     """Write data/release/<version>/, or with ``dry_run`` build and validate it in a temp dir."""
     if not dry_run and (dirty := uncommitted_inputs()):
         raise ReleaseError(f"uncommitted release inputs; commit first:\n{dirty}")
-    tasks, split, image_ids, extra = assemble()
+    tasks, (primary, global_split), image_ids, extra = assemble()
+    if not extra["commits"]["validated_data_unchanged_since_that_commit"]:
+        raise ReleaseError("validated data files differ from their last commit; commit first")
     head = _git_head()
     if dry_run:
         temp = Path(tempfile.mkdtemp(prefix="repogym-release-"))
         try:
             out = temp / version
-            manifest = write_release(out, version, tasks, split, image_ids, head, extra)
+            manifest = write_release(
+                out, version, tasks, primary, global_split, image_ids, head, extra
+            )
             return manifest, validate_release(out)
         finally:
             shutil.rmtree(temp)
     out = RELEASE_DIR / version
-    manifest = write_release(out, version, tasks, split, image_ids, head, extra)
+    manifest = write_release(out, version, tasks, primary, global_split, image_ids, head, extra)
     problems = validate_release(out)
     if problems:
         raise ReleaseError(f"release written but failed validation: {problems[:5]}")
