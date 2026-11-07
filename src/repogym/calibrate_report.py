@@ -20,7 +20,7 @@ SPEC_COLUMN = "my_spec_clear (yes / no)"
 def _filled(path, column) -> dict[str, str]:
     if not path.exists():
         return {}
-    with path.open(newline="", encoding="utf-8") as handle:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         return {
             row["task_id"]: row[column].strip().lower()
             for row in csv.DictReader(handle)

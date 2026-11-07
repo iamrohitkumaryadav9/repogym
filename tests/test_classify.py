@@ -403,3 +403,11 @@ def test_precision_recall():
     pr = precision_recall(actual=[True, True, False, False], flagged=[True, False, True, False])
     assert (pr.precision, pr.recall) == (0.5, 0.5)
     assert precision_recall([False], [False]).precision is None
+
+
+def test_sheets_saved_with_a_bom_are_read(tmp_path):
+    from repogym.calibrate_report import TYPE_COLUMN, _filled
+
+    path = tmp_path / "sheet.csv"
+    path.write_bytes(("﻿task_id," + TYPE_COLUMN + "\r\nt1, Bug \r\nt2,\r\n").encode())
+    assert _filled(path, TYPE_COLUMN) == {"t1": "bug"}
