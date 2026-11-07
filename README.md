@@ -89,6 +89,26 @@ To keep a slow but correct fix from failing on a busier machine, every FAIL_TO_P
 PASS_TO_PASS test must finish in under 10 seconds (a third of the per-test timeout) in **all three**
 oracle runs. Otherwise the task is rejected as `oracle_too_close_to_timeout`.
 
+#### Out of memory
+
+Each container has a 2 GiB limit, and each run records its peak memory use (cgroup
+`memory.peak`) in `data/run_metrics.jsonl`. Some bugs make memory blow up before the per-test
+timeout fires, and then the kernel kills pytest before it can write its JUnit report. To keep the
+results of such runs, a small pytest plugin logs every test's result to a file as it goes.
+
+When the **unsolved** or **no-op** run is OOM-killed:
+
+* tests that finished keep their real results;
+* the test that was running when memory ran out counts as **FAILED**;
+* tests that never started are unknown, so they enter neither list.
+
+This is allowed only if **all three oracle runs pass with peak memory under 50% of the limit**
+(1 GiB). Otherwise, or if no test was recorded as running, the task is rejected as
+`unsolved_out_of_memory`, because the OOM may come from a test that is simply too heavy for a small
+container rather than from the bug. An OOM in the baseline or oracle runs is never excused. The rule
+covers every future OOM case. For example, `astroid-2596` peaks at 2 GiB without the fix and
+68 MiB with it.
+
 ### The three validity checks
 
 For each candidate, the validator first runs a **baseline**: `base_commit` with no patches, running
@@ -114,7 +134,14 @@ Validation is **resumable**. Each result is flushed to disk (fsync) as soon as i
 rerun skips any task already in either file. If Docker itself fails, for example because the laptop
 slept, the run stops without recording those tasks, so they are retried next time.
 `repogym validate --retry <reason>` re-validates tasks rejected for a given reason, such as
-`unsolved_timeout`.
+`unsolved_timeout`. `--task <id>` re-validates single tasks from scratch, and `--all` re-validates
+everything.
+
+Every validated task, verified or rejected, gets a **provenance** record in
+`data/provenance.jsonl`: the image name and its content-addressed id (`sha256:` of the image
+config), the repogym git commit and whether the code had uncommitted changes, the pytest version in
+the container, and the UTC time. The provenance is written before the result, so a recorded result
+always has provenance.
 
 ### WSL2 setup
 
@@ -168,8 +195,9 @@ Every verified task carries three extra fields, set by `validate` and recomputed
 
 * **`task_type`**: `"bug"`, `"feature"` or `"unknown"`, from the PR and issue labels (for example
   *Bug*, *Crash*, *Regression* versus *Feature*, *Enhancement*). No labels, or labels pointing both
-  ways, give `"unknown"`. `repogym.tasktype.TaskTypeClassifier` is a hook for a later LLM
-  classifier that only runs when the labels are inconclusive (see the TODO there).
+  ways, give `"unknown"`. For those, `repogym classify` runs an LLM classifier (below). Its labels
+  are kept in `data/task_type_labels.jsonl` and are **not applied** until they have been calibrated
+  against human labels.
 * **`spec_clear`** and **`spec_issues`**: whether the issue tells an agent enough to pass the tests.
   The check (`repogym/spec.py`) parses the patched test files and collects what the *added* lines
   use from the library: names imported from the package, attributes, keyword arguments and
@@ -193,3 +221,59 @@ FAIL_TO_PASS size matters too, but is only reported, not filtered. With a single
 is effectively binary and easier to satisfy with a narrow special case. Tasks with several
 FAIL_TO_PASS tests give a denser, harder-to-game signal. `repogym stats` reports how many tasks
 have 1, 2–5, or 6+ FAIL_TO_PASS tests.
+
+### LLM task-type classifier
+
+`repogym classify` sends Gemini each task's issue title, issue body (template comments removed,
+cut at a line break near 3,000 characters), PR title and PR labels. It asks for strict JSON:
+`{"task_type": "bug"|"feature"|"other", "confidence": 0–1, "rationale": "..."}`.
+
+* **Settings**: `GEMINI_API_KEY`, `GEMINI_MODEL` and `GEMINI_FALLBACK_MODEL` are read from `.env`,
+  and the command stops if any is missing. The key is sent only in the `x-goog-api-key` header. It
+  never appears in URLs, logs or the cache.
+* **Retries**: HTTP 503, 429, 500 and network errors are retried up to 5 times, with exponential
+  backoff (2, 4, 8, 16 s) and ±50% jitter. Other errors fail immediately. Only after the primary
+  model's attempts are exhausted does it fall back to `GEMINI_FALLBACK_MODEL`, with the same policy.
+* **Throttling and cache**: at most one request every 5 seconds (`--interval`). Successful
+  responses are cached under `data/cache/llm/`, keyed by model, prompt version and prompt, so reruns
+  cost nothing. A rerun always tries the primary model again before reusing a fallback answer, so
+  fallback labels move to the primary model when it is available.
+* **Validation**: the JSON is checked strictly: exact keys, a known `task_type`, a confidence in
+  [0, 1] and a non-empty rationale. Malformed output is never cached and is retried once, fresh.
+  After a second failure the task is `"unknown"` and the error is recorded.
+* **Provenance**: every label records the model that produced it and the prompt version
+  (`task-type-v1`). Calibration is reported separately per model.
+
+**Calibration before use.** `repogym sheets` writes two blind CSV sheets to `data/labelling/`.
+They hide our own predictions, which go in a separate `*.key.json`.
+
+* `task_type_sheet.csv`: 30 tasks (10 GitHub-labelled bugs, the feature-labelled ones, the rest
+  unlabelled, spread across repos).
+* `spec_sheet.csv`: every spec-flagged task plus a repo-stratified random sample, 25 in total,
+  with an excerpt of the test patch.
+
+After they are filled in, `repogym calibrate` reports the classifier's accuracy and Cohen's kappa
+against the human labels and against GitHub labels, per model, and the spec check's precision and
+recall against the human labels.
+
+### Releases, time-based splits and contamination
+
+`repogym release v0.1` freezes the verified tasks into `data/release/v0.1/`:
+
+* `tasks.jsonl`: each task with its `split`, PR `merged_at` and `created_at`, and PR and issue URLs.
+* `manifest.json`: task count, per-repo counts, the SHA-256 of `tasks.jsonl`, the image ids, the
+  repogym commit, the creation date and the split cutoffs and counts.
+
+A release directory is never overwritten.
+
+**Splits are by time, not at random.** Tasks are sorted by PR merge time. The newest 20% are
+`test`, the next 10% are `dev`, and the rest are `train`. A model tuned on `train`/`dev` is
+therefore always evaluated on fixes merged after everything it was tuned on.
+
+**Contamination.** Every task is a public pull request, so any model whose training data was
+collected after a task's merge date may have seen the issue, the discussion and the fix itself.
+That would inflate its score without measuring the skill the task is meant to test. The time-based
+`test` split is the most contamination-resistant part of the dataset, because it holds the most
+recent fixes. Each task records its `merged_at`. When we evaluate agents, we will also report
+results separately on tasks merged after each model's published training cutoff, where one is known.
+Those are the only results not exposed to this kind of leakage.
