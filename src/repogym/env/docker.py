@@ -60,6 +60,21 @@ def ensure_builder() -> None:
     _docker("buildx", "inspect", "--bootstrap", BUILDER_NAME)
 
 
+def build_command(spec: RepoSpec, context: str) -> list[str]:
+    """Always build on repogym-builder, so all RepoGym build cache lives in that one builder."""
+    return [
+        "docker", "buildx", "build",
+        "--builder", BUILDER_NAME,
+        "--load",
+        "--quiet",
+        "--build-arg", f"PYTHON_IMAGE={PYTHON_IMAGE}",
+        "--build-arg", f"APT_PACKAGES={' '.join(spec.apt_packages)}",
+        "--label", IMAGE_LABEL,
+        "-t", spec.image,
+        context,
+    ]  # fmt: skip
+
+
 def build_image(spec: RepoSpec) -> None:
     package = resources.files("repogym.env")
     with tempfile.TemporaryDirectory() as context:
@@ -67,19 +82,9 @@ def build_image(spec: RepoSpec) -> None:
         (ctx / "Dockerfile").write_text((package / "Dockerfile").read_text())
         requirements = package / "requirements" / f"{spec.slug}.txt"
         (ctx / "requirements.txt").write_text(requirements.read_text())
+        command = build_command(spec, str(ctx))
         done = subprocess.run(
-            [
-                "docker",
-                "build",
-                "--quiet",
-                "--build-arg",
-                f"PYTHON_IMAGE={PYTHON_IMAGE}",
-                "--label",
-                IMAGE_LABEL,
-                "-t",
-                spec.image,
-                str(ctx),
-            ],  # fmt: skip
+            command,
             text=True,
             capture_output=True,
         )

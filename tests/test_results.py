@@ -146,3 +146,15 @@ def test_repogym_image_bytes_counts_shared_layers_once():
         {"UniqueSize": "50MB", "SharedSize": "300MB"},
     ]
     assert _repogym_image_bytes(rows) == 450_000_000
+
+
+def test_build_uses_the_repogym_builder_and_apt_packages():
+    from repogym.config import REPOS
+    from repogym.env.docker import build_command
+
+    command = build_command(REPOS["click"], "/ctx")
+    assert command[:3] == ["docker", "buildx", "build"]
+    assert command[command.index("--builder") + 1] == "repogym-builder"
+    assert "--load" in command
+    assert "APT_PACKAGES=less" in command
+    assert "APT_PACKAGES=" in build_command(REPOS["attrs"], "/ctx")
