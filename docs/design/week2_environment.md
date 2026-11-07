@@ -432,3 +432,37 @@ Every decision was approved, with these additions. They are binding for the impl
 * **D3, evidence.** A single `conftest.py` hook that turns failures into passes gets **reward 1
   on 14/14** dev tasks with no reverts, and also with the brief's original "revert test_patch
   paths" rule. With the extended D3 rules it gets **0/14**.
+
+## 14. D6 decision: future information is leakage, past history is context (2026-11-07)
+
+The gold-patch probe exists to catch **future** information reaching the agent: commits made
+after `base_commit` that contain the fix. Everything in a task's history *before* `base_commit`
+is legitimate context a real developer would have. For example, `git log -S` finds code that
+was deleted earlier and that the fix brings back. Overlap between the fix and past commits is
+therefore not leakage.
+
+* **Setup hard-fails only if the exact fix is reachable**, meaning a patch-id match. That can
+  only happen if the history construction is broken, because the history holds `base_commit`'s
+  ancestors only. Currently 0 tasks are affected. The other history assertions are unchanged:
+  * no commit that isn't an ancestor is reachable;
+  * every commit object is an ancestor;
+  * there are no remotes, tags or reflog entries;
+  * the container's commit set equals the bundle's.
+* **Past-history overlap is recorded, not failed on.** `data/probe/history_overlap.jsonl`
+  (from `repogym probe-history`) and every episode record carry:
+  * `history_overlap_max_fraction`: the largest share of the fix's distinctive lines that a
+    single past commit adds;
+  * `history_overlap_lines`;
+  * the top overlapping commit;
+  * `history_recoverable`: true when one past commit holds at least 50% of the fix's distinctive
+    lines **and** at least 5 of them.
+* **Overlap across the 247 tasks:** 89 have some overlap, 9 have 50% or more in a single commit
+  (mostly fixes with only 1–2 distinctive lines), and **1 is `history_recoverable`**:
+  `pallets__click-3239`, where commit `6c4a77b` adds 15 of its 17 distinctive lines. No task is
+  excluded.
+* Agent reports and the leaderboard break results down by `history_recoverable`.
+
+D7 is recorded in §13 as an **evaluated and rejected alternative**. A read-only root with tmpfs
+`/work` and `/tmp` would weaken the installed-once guarantee for tomlkit: the image's released
+copy can't be removed, only masked. Also, astroid's editable install fails under it. The writable
+root is kept, with the 2 GB per-episode disk budget and the 1 GiB per-file limit.
