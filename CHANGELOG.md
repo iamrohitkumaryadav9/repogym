@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1 (unreleased draft)
+## v0.1 (2026-11-07)
 
 First frozen dataset: 247 verified tasks from 5 Python repositories, with time-based splits.
 
@@ -48,6 +48,14 @@ First frozen dataset: 247 verified tasks from 5 Python repositories, with time-b
 - Spec check against 25 blind human labels: precision 0.67, recall 0.75, F1 0.71.
   - 3 false positives were adjudicated, and the human labels were upheld in all 3.
 - `gemini-3.8-flash` was dropped as the official model because of free-tier 429 limits.
+
+### Licensing
+- The RepoGym code is MIT-licensed. Tasks keep their upstream licences:
+  - pallets/click: BSD-3-Clause
+  - pylint-dev/astroid: LGPL-2.1-or-later
+  - python-poetry/tomlkit, PyCQA/isort, python-attrs/attrs: MIT
+- Each licence was read at every task's base commit, and each task records `upstream_license`.
+- Added `CITATION.cff`.
 
 ### Tooling
 - `repogym release <version> [--dry-run]` writes `tasks.jsonl` and `manifest.json`, then
