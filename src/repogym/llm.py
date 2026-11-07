@@ -78,6 +78,16 @@ class Completion:
 
 
 @dataclass(frozen=True)
+class ChatCompletion:
+    text: str
+    model: str
+    finish_reason: str
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    cached_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class CacheProblem:
     path: Path
     model: str | None
@@ -134,6 +144,7 @@ class GeminiClient:
         self._throttle = Throttle(interval, sleep=sleep)
         self._http = httpx.Client(timeout=120) if transport is None else None
         self._transport = transport or self._post
+        self._chat_transport: Callable[[str, dict], httpx.Response] | None = None
         self.requests = 0
 
     def close(self) -> None:
@@ -178,21 +189,21 @@ class GeminiClient:
             },
         )
 
-    def _call_with_retries(
-        self, model: str, prompt: str, generation_config: dict
-    ) -> tuple[str, str]:
+    def _retrying(self, model: str, send: Callable[[], httpx.Response]) -> httpx.Response:
+        """One request with the shared policy: throttle, retry 429/500/503 and network errors
+        with jittered exponential backoff (5 attempts), fail fast on anything else."""
         delays = backoff_delays()
         for attempt in range(MAX_ATTEMPTS):
             self._throttle.wait()
             self.requests += 1
             try:
-                response = self._transport(model, prompt, generation_config)
+                response = send()
             except httpx.TransportError as exc:
                 status, reason = None, type(exc).__name__
             else:
                 status, reason = response.status_code, ""
                 if status == 200:
-                    return _extract_text(response)
+                    return response
                 if status not in RETRY_STATUSES:
                     # Report the status only: error bodies can echo request details.
                     raise LLMRequestError(f"{model} returned HTTP {status}")
@@ -201,6 +212,61 @@ class GeminiClient:
                 log.warning("llm_retry", model=model, status=status or reason, sleep=round(wait, 1))
                 self._sleep(wait)
         raise LLMUnavailable(f"{model}: {MAX_ATTEMPTS} attempts failed")
+
+    def _call_with_retries(
+        self, model: str, prompt: str, generation_config: dict
+    ) -> tuple[str, str]:
+        response = self._retrying(model, lambda: self._transport(model, prompt, generation_config))
+        return _extract_text(response)
+
+    # -- multi-turn chat (agents) --------------------------------------------------------------
+
+    def _post_chat(self, model: str, payload: dict) -> httpx.Response:
+        assert self._http is not None
+        return self._http.post(
+            f"{API_ROOT}/{model}:generateContent",
+            headers={"x-goog-api-key": self.settings.api_key},
+            json=payload,
+        )
+
+    def chat(
+        self,
+        system: str,
+        turns: list[tuple[str, str]],
+        generation_config: dict,
+        chat_transport: Callable[[str, dict], httpx.Response] | None = None,
+    ) -> ChatCompletion:
+        """A multi-turn request (``turns`` are ("user" | "model", text) pairs), with the same
+        retry, fallback and finishReason rules as ``complete``. Never cached: an agent's turns
+        are a trajectory, not a lookup."""
+        send = chat_transport or self._chat_transport or self._post_chat
+        payload = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": role, "parts": [{"text": text}]} for role, text in turns],
+            "generationConfig": generation_config,
+        }
+        primary, fallback = self.settings.model, self.settings.fallback_model
+        models = [primary] if fallback == primary else [primary, fallback]
+        for index, model in enumerate(models):
+            try:
+                response = self._retrying(model, lambda m=model: send(m, payload))
+            except LLMUnavailable:
+                if index == len(models) - 1:
+                    raise
+                log.warning("llm_fallback", primary=primary, fallback=fallback)
+                continue
+            text, finish_reason = _extract_text(response)
+            usage = response.json().get("usageMetadata") or {}
+            return ChatCompletion(
+                text=text,
+                model=model,
+                finish_reason=finish_reason,
+                prompt_tokens=usage.get("promptTokenCount"),
+                completion_tokens=(usage.get("candidatesTokenCount") or 0)
+                + (usage.get("thoughtsTokenCount") or 0),
+                cached_tokens=usage.get("cachedContentTokenCount"),
+            )
+        raise LLMUnavailable("no model available")
 
     def _fresh(self, model: str, prompt: str, cache_key: str, generation_config: dict,
                validate: Callable[[str], object] | None) -> Completion:  # fmt: skip
