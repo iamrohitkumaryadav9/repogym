@@ -15,6 +15,7 @@ VERIFIED_PATH = DATA_DIR / "tasks_verified.jsonl"
 REJECTIONS_PATH = DATA_DIR / "rejections.jsonl"
 BASELINE_PATH = DATA_DIR / "baseline_failures.jsonl"
 RUN_METRICS_PATH = DATA_DIR / "run_metrics.jsonl"
+PROVENANCE_PATH = DATA_DIR / "provenance.jsonl"
 BUILD_LOG_PATH = DATA_DIR / "image_builds.jsonl"
 
 MINING_WINDOW_DAYS = 3 * 365
@@ -22,6 +23,10 @@ MAX_CHANGED_LINES = 300
 
 DEFAULT_WORKERS = 2
 CONTAINER_MEMORY = "2g"
+CONTAINER_MEMORY_BYTES = 2 * 1024**3
+# An OOM kill without the fix counts as a failing test only if the fixed code stays far below
+# the limit; otherwise the "bug" might just be a test that is heavy on a small container.
+OOM_ORACLE_PEAK_FRACTION = 0.5
 CONTAINER_CPUS = "2"
 RUN_TIMEOUT_SECONDS = 300  # whole container; a backstop behind the per-test timeout
 PER_TEST_TIMEOUT_SECONDS = 30

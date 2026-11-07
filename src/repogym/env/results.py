@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -108,3 +109,65 @@ def test_belongs_to_module(test_id: str, module: str) -> bool:
 
 
 test_belongs_to_module.__test__ = False  # type: ignore[attr-defined]
+
+
+def nodeid_to_test_id(nodeid: str) -> str:
+    """Map a pytest node id to the JUnit-style id used everywhere else.
+
+    ``tests/test_a.py::TestC::test_x[p]`` becomes ``tests.test_a.TestC::test_x[p]``.
+    """
+    path, _, rest = nodeid.partition("::")
+    module = path[:-3] if path.endswith(".py") else path
+    parts = rest.split("::")
+    return ".".join([module.replace("/", "."), *parts[:-1]]) + "::" + parts[-1]
+
+
+@dataclass
+class Progress:
+    tests: dict[str, TestStatus] = field(default_factory=dict)
+    killed_test: str | None = None
+
+
+def parse_progress(lines: list[str]) -> Progress:
+    """Rebuild results from the live progress log of a run that was killed mid-way.
+
+    Tests that finished keep their real status. A test that started but never reported its
+    teardown was running when the process died, so it is FAILED. Tests that never started are
+    absent: we know nothing about them.
+    """
+    events: dict[str, list[dict[str, object]]] = {}
+    order: list[str] = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # the last line may be cut off by the kill
+        nodeid = str(event.get("nodeid", ""))
+        if nodeid not in events:
+            events[nodeid] = []
+            order.append(nodeid)
+        events[nodeid].append(event)
+
+    progress = Progress()
+    for nodeid in order:
+        reports = [e for e in events[nodeid] if e.get("event") == "report"]
+        test_id = nodeid_to_test_id(nodeid)
+        if not any(r.get("when") == "teardown" for r in reports):
+            progress.tests[test_id] = TestStatus.FAILED
+            progress.killed_test = test_id
+            continue
+        progress.tests[test_id] = _status_from_reports(reports)
+    return progress
+
+
+def _status_from_reports(reports: list[dict[str, object]]) -> TestStatus:
+    by_phase = {str(r.get("when")): r for r in reports}
+    for phase in ("setup", "teardown"):
+        if by_phase.get(phase, {}).get("outcome") == "failed":
+            return TestStatus.ERROR
+    call = by_phase.get("call") or by_phase.get("setup") or {}
+    if call.get("outcome") == "skipped":
+        return TestStatus.XFAILED if call.get("xfail") else TestStatus.SKIPPED
+    if call.get("outcome") == "failed":
+        return TestStatus.FAILED
+    return TestStatus.PASSED

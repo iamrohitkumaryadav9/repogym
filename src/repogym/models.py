@@ -88,6 +88,10 @@ class TestRun(BaseModel):
     duration_seconds: float = 0.0
     test_seconds: dict[str, float] = Field(default_factory=dict)
     timed_out: list[str] = Field(default_factory=list)
+    # For an OOM run: the test that was running when memory ran out (its results are partial).
+    killed_test: str | None = None
+    peak_memory_bytes: int | None = None
+    pytest_version: str | None = None
     detail: str = ""
     pytest_exit_code: int | None = None
 
@@ -110,4 +114,20 @@ class BaselineRecord(BaseModel):
 
 class RunMetrics(BaseModel):
     task_id: str
-    oracle_seconds: float
+    oracle_seconds: float | None = None
+    # Run label (baseline, oracle1, unsolved, noop, oracle2, oracle3) -> cgroup peak bytes.
+    peak_memory_bytes: dict[str, int | None] = Field(default_factory=dict)
+
+
+class Provenance(BaseModel):
+    """What produced a task's validation result, so it can be reproduced or invalidated."""
+
+    task_id: str
+    status: Literal["verified", "rejected"]
+    reason: str = ""
+    docker_image: str
+    image_id: str
+    repogym_commit: str
+    repogym_dirty: bool
+    pytest_version: str | None
+    validated_at: str

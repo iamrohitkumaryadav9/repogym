@@ -158,3 +158,80 @@ def test_build_uses_the_repogym_builder_and_apt_packages():
     assert "--load" in command
     assert "APT_PACKAGES=less" in command
     assert "APT_PACKAGES=" in build_command(REPOS["attrs"], "/ctx")
+
+
+def test_nodeid_to_test_id_matches_junit_ids():
+    from repogym.env.results import nodeid_to_test_id
+
+    assert nodeid_to_test_id("tests/test_a.py::test_ok") == "tests.test_a::test_ok"
+    assert (
+        nodeid_to_test_id("tests/test_a.py::TestC::test_bad[x-1]")
+        == "tests.test_a.TestC::test_bad[x-1]"
+    )
+    assert nodeid_to_test_id("tests/unit/test_b.py::A::B::t") == "tests.unit.test_b.A.B::t"
+
+
+def _events(nodeid, *phases, start=True):
+    import json
+
+    lines = [json.dumps({"nodeid": nodeid, "event": "start"})] if start else []
+    for when, outcome, *xfail in phases:
+        lines.append(json.dumps({
+            "nodeid": nodeid, "event": "report", "when": when, "outcome": outcome,
+            "xfail": bool(xfail),
+        }))  # fmt: skip
+    return lines
+
+
+def test_progress_log_gives_finished_results_and_the_killed_test():
+    from repogym.env.results import parse_progress
+
+    lines = (
+        _events("tests/t.py::ok", ("setup", "passed"), ("call", "passed"), ("teardown", "passed"))
+        + _events(
+            "tests/t.py::bad", ("setup", "passed"), ("call", "failed"), ("teardown", "passed")
+        )
+        + _events("tests/t.py::skip", ("setup", "skipped"), ("teardown", "passed"))
+        + _events(
+            "tests/t.py::xf", ("setup", "passed"), ("call", "skipped", True), ("teardown", "passed")
+        )
+        + _events("tests/t.py::fix", ("setup", "failed"), ("teardown", "passed"))
+        + _events("tests/t.py::hog", ("setup", "passed"))
+        + ['{"nodeid": "tests/t.py::hog", "event": "rep']  # cut off by the kill
+    )
+    progress = parse_progress(lines)
+    assert progress.killed_test == "tests.t::hog"
+    assert progress.tests == {
+        "tests.t::ok": TestStatus.PASSED,
+        "tests.t::bad": TestStatus.FAILED,
+        "tests.t::skip": TestStatus.SKIPPED,
+        "tests.t::xf": TestStatus.XFAILED,
+        "tests.t::fix": TestStatus.ERROR,
+        "tests.t::hog": TestStatus.FAILED,
+    }
+
+
+def test_progress_log_without_a_running_test_has_no_killed_test():
+    from repogym.env.results import parse_progress
+
+    lines = _events(
+        "tests/t.py::ok", ("setup", "passed"), ("call", "passed"), ("teardown", "passed")
+    )
+    assert parse_progress(lines).killed_test is None
+    assert parse_progress([]).tests == {}
+
+
+def test_parse_run_oom_keeps_partial_results_and_peak_memory():
+    import json
+
+    lines = _events(
+        "tests/t.py::ok", ("setup", "passed"), ("call", "passed"), ("teardown", "passed")
+    )
+    lines += _events("tests/t.py::hog", ("setup", "passed"))
+    payload = {"stage": "oom", "detail": "pytest exit -9", "progress": lines,
+               "peak_memory_bytes": 2147483648, "pytest_version": "8.4.2"}  # fmt: skip
+    run = _parse_run(0, json.dumps(payload), "")
+    assert run.stage is RunStage.OOM
+    assert run.killed_test == "tests.t::hog"
+    assert run.tests["tests.t::ok"] is TestStatus.PASSED
+    assert run.peak_memory_bytes == 2147483648 and run.pytest_version == "8.4.2"

@@ -24,7 +24,7 @@ from repogym.config import (
     RUN_TIMEOUT_SECONDS,
     RepoSpec,
 )
-from repogym.env.results import parse_junit
+from repogym.env.results import parse_junit, parse_progress
 from repogym.models import RunStage, TestRun
 
 log = structlog.get_logger()
@@ -42,6 +42,12 @@ class DockerUnavailable(RuntimeError):
 
 def _docker(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["docker", *args], input=input_text, text=True, capture_output=True)
+
+
+def image_id(image: str) -> str:
+    """Content-addressed id (sha256 of the image config) of a local image, or "" if missing."""
+    done = _docker("image", "inspect", "--format", "{{.Id}}", image)
+    return done.stdout.strip() if done.returncode == 0 else ""
 
 
 def check_docker() -> None:
@@ -156,8 +162,22 @@ def _parse_run(returncode: int, stdout: str, stderr: str) -> TestRun:
             detail=f"exit {returncode}: {(stdout + stderr)[-_DETAIL_LIMIT:]}",
         )
     stage = RunStage(payload["stage"])
+    common = {
+        "peak_memory_bytes": payload.get("peak_memory_bytes"),
+        "pytest_version": payload.get("pytest_version"),
+    }
+    if stage is RunStage.OOM:
+        progress = parse_progress(payload.get("progress", []))
+        return TestRun(
+            stage=stage,
+            tests=progress.tests,
+            killed_test=progress.killed_test,
+            duration_seconds=payload.get("duration", 0.0),
+            detail=payload.get("detail", ""),
+            **common,
+        )
     if stage is not RunStage.COMPLETED:
-        return TestRun(stage=stage, detail=payload.get("detail", ""))
+        return TestRun(stage=stage, detail=payload.get("detail", ""), **common)
     parsed = parse_junit(payload.get("junit_xml", ""))
     return TestRun(
         stage=RunStage.COMPLETED,
@@ -168,6 +188,7 @@ def _parse_run(returncode: int, stdout: str, stderr: str) -> TestRun:
         timed_out=parsed.timed_out,
         detail=parsed.first_error,
         pytest_exit_code=payload.get("exit_code"),
+        **common,
     )
 
 

@@ -12,16 +12,71 @@ import time
 
 WORK = "/work"
 JUNIT = "/tmp/junit.xml"
+PROGRESS = "/tmp/repogym_progress.jsonl"
+PLUGIN_DIR = "/tmp/repogym_plugin"
 TAIL = 2000
+PROGRESS_LIMIT = 20000
+
+# Logs every test as it starts and finishes, line-buffered, so the results of tests that ran
+# before an OOM kill survive even though pytest never gets to write its JUnit file.
+PLUGIN = """
+import json
+_log = open("__PROGRESS__", "a", buffering=1)
+
+def pytest_runtest_logstart(nodeid, location):
+    _log.write(json.dumps({"nodeid": nodeid, "event": "start"}) + "\\n")
+
+def pytest_runtest_logreport(report):
+    _log.write(json.dumps({
+        "nodeid": report.nodeid, "event": "report", "when": report.when,
+        "outcome": report.outcome, "xfail": hasattr(report, "wasxfail"),
+    }) + "\\n")
+""".replace("__PROGRESS__", PROGRESS)
 
 
 def sh(*args, input_text=None):
     return subprocess.run(args, cwd=WORK, input=input_text, text=True, capture_output=True)
 
 
+def peak_memory_bytes():
+    """The container cgroup's peak memory use (cgroup v2, falling back to v1)."""
+    for path in ("/sys/fs/cgroup/memory.peak", "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"):
+        try:
+            with open(path) as handle:
+                return int(handle.read().strip())
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def pytest_version():
+    try:
+        from importlib.metadata import version
+
+        return version("pytest")
+    except Exception:  # noqa: BLE001 - provenance only
+        return None
+
+
 def finish(stage, detail="", **extra):
-    print(json.dumps({"stage": stage, "detail": detail[-TAIL:], **extra}))
+    payload = {
+        "stage": stage,
+        "detail": detail[-TAIL:],
+        "peak_memory_bytes": peak_memory_bytes(),
+        "pytest_version": pytest_version(),
+        **extra,
+    }
+    print(json.dumps(payload))
     sys.exit(0)
+
+
+def read_progress():
+    try:
+        with open(PROGRESS, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return []
+    return lines[-PROGRESS_LIMIT:]
 
 
 def apply_patch(patch, failed_stage):
@@ -72,19 +127,32 @@ def main():
             finish("no_test_files", "None of the touched test files exist after patching")
         finish("completed", junit_xml="", exit_code=None, duration=0.0)
 
+    os.makedirs(PLUGIN_DIR, exist_ok=True)
+    with open(os.path.join(PLUGIN_DIR, "repogym_progress.py"), "w") as handle:
+        handle.write(PLUGIN)
+    env = dict(os.environ, PYTHONPATH=PLUGIN_DIR)
     start = time.monotonic()
-    done = sh(
+    done = subprocess.run(
+        [
         sys.executable, "-m", "pytest", "--quiet", "--tb=short", "-p", "no:cacheprovider",
         "--continue-on-collection-errors", f"--junitxml={JUNIT}",
         # A hanging test fails on its own instead of taking the whole run down with it.
         f"--timeout={job['per_test_timeout']}", "--timeout-method=signal",
+        "-p", "repogym_progress",
         *files,
+        ],
+        cwd=WORK, text=True, capture_output=True, env=env,
     )  # fmt: skip
     duration = time.monotonic() - start
     output = done.stdout + done.stderr
     if not os.path.exists(JUNIT):
         stage = "oom" if done.returncode in (-9, 137) else "no_results"
-        finish(stage, f"pytest exit {done.returncode}\n{output}")
+        finish(
+            stage,
+            f"pytest exit {done.returncode}\n{output}",
+            progress=read_progress(),
+            duration=duration,
+        )
     with open(JUNIT, encoding="utf-8", errors="replace") as handle:
         xml = handle.read()
     finish("completed", output, junit_xml=xml, exit_code=done.returncode, duration=duration)
