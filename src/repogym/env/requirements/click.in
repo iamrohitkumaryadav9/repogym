@@ -9,3 +9,4 @@ hatch-vcs
 hatch-fancy-pypi-readme
 poetry-core
 editables
+pytest-timeout

@@ -75,7 +75,10 @@ def main():
     start = time.monotonic()
     done = sh(
         sys.executable, "-m", "pytest", "--quiet", "--tb=short", "-p", "no:cacheprovider",
-        "--continue-on-collection-errors", f"--junitxml={JUNIT}", *files,
+        "--continue-on-collection-errors", f"--junitxml={JUNIT}",
+        # A hanging test fails on its own instead of taking the whole run down with it.
+        f"--timeout={job['per_test_timeout']}", "--timeout-method=signal",
+        *files,
     )  # fmt: skip
     duration = time.monotonic() - start
     output = done.stdout + done.stderr

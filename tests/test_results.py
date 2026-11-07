@@ -81,3 +81,68 @@ def test_parse_size():
     assert parse_size("0B") == 0
     assert parse_size("323.8MB") == 323_800_000
     assert parse_size("12kB") == 12_000
+
+
+TIMEOUT_JUNIT = """<testsuite>
+<testcase classname="tests.t" name="test_hang_v2" time="30.01">
+  <failure message="Failed: Timeout (&gt;30.0s) from pytest-timeout.">E   Failed: Timeout</failure>
+</testcase>
+<testcase classname="tests.t" name="test_hang_v1" time="30.0">
+  <failure message="Failed: Timeout &gt;30.0s">...</failure>
+</testcase>
+<testcase classname="tests.t" name="test_fixture_hang" time="30.0">
+  <error message='failed on setup with "Failed: Timeout (&gt;30.0s) from pytest-timeout."'>.</error>
+</testcase>
+<testcase classname="tests.t" name="test_mentions_timeout" time="0.2">
+  <failure message="assert 'Timeout' in output">E   AssertionError</failure>
+</testcase>
+<testcase classname="tests.t" name="test_ok" time="1.5"/>
+</testsuite>"""
+
+
+def test_per_test_timeouts_are_failures_in_any_phase():
+    parsed = parse_junit(TIMEOUT_JUNIT)
+    assert parsed.timed_out == [
+        "tests.t::test_hang_v2",
+        "tests.t::test_hang_v1",
+        "tests.t::test_fixture_hang",
+    ]
+    assert parsed.tests["tests.t::test_fixture_hang"] is TestStatus.FAILED
+    assert parsed.tests["tests.t::test_hang_v2"] is TestStatus.FAILED
+
+
+def test_a_failure_merely_mentioning_timeout_is_not_a_timeout():
+    parsed = parse_junit(TIMEOUT_JUNIT)
+    assert "tests.t::test_mentions_timeout" not in parsed.timed_out
+    assert parsed.tests["tests.t::test_mentions_timeout"] is TestStatus.FAILED
+
+
+def test_per_test_durations_are_recorded():
+    assert parse_junit(TIMEOUT_JUNIT).seconds["tests.t::test_ok"] == 1.5
+
+
+def test_timeout_message_patterns():
+    from repogym.env.results import is_timeout_message
+
+    assert is_timeout_message("Failed: Timeout (>30.0s) from pytest-timeout.")
+    assert is_timeout_message("Failed: Timeout >5.0s")
+    assert not is_timeout_message("TimeoutError: socket timed out")
+    assert not is_timeout_message("assert 'Timeout' in output")
+
+
+def test_parse_buildx_du_total():
+    from repogym.env.docker import parse_buildx_du_total
+
+    text = "ID  RECLAIMABLE  SIZE\nabc true 1.2GB\nShared:\t0B\nPrivate:\t1.2GB\nTotal:\t1.25GB\n"
+    assert parse_buildx_du_total(text) == 1_250_000_000
+    assert parse_buildx_du_total("") == 0
+
+
+def test_repogym_image_bytes_counts_shared_layers_once():
+    from repogym.env.docker import _repogym_image_bytes
+
+    rows = [
+        {"UniqueSize": "100MB", "SharedSize": "300MB"},
+        {"UniqueSize": "50MB", "SharedSize": "300MB"},
+    ]
+    assert _repogym_image_bytes(rows) == 450_000_000

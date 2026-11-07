@@ -10,3 +10,4 @@ hatch-fancy-pypi-readme
 poetry-core
 PyYAML
 editables
+pytest-timeout

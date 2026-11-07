@@ -22,3 +22,4 @@ stdlibs
 toml
 editables
 hatch-mypyc
+pytest-timeout

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -16,6 +17,9 @@ _SEVERITY = {
     TestStatus.PASSED: 0,
 }
 _MESSAGE_LIMIT = 300
+# pytest-timeout fails the test with e.g. "Failed: Timeout (>30.0s) from pytest-timeout." (2.x)
+# or "Failed: Timeout >30.0s" (1.x), during the call or inside a fixture.
+_TIMEOUT_MESSAGE = re.compile(r"Timeout \(?>\s*[\d.]+s\)?(?: from pytest-timeout)?")
 
 
 @dataclass
@@ -24,6 +28,12 @@ class ParsedResults:
     # Dotted module names that failed to import, e.g. "tests.test_core".
     collection_errors: list[str] = field(default_factory=list)
     first_error: str = ""
+    seconds: dict[str, float] = field(default_factory=dict)
+    timed_out: list[str] = field(default_factory=list)
+
+
+def is_timeout_message(message: str) -> bool:
+    return bool(_TIMEOUT_MESSAGE.search(message))
 
 
 def _status_of(case: ET.Element) -> tuple[TestStatus, str]:
@@ -75,6 +85,16 @@ def parse_junit(xml_text: str) -> ParsedResults:
             results.collection_errors.append(name)
             continue
         test_id = f"{classname}::{name}"
+        if status in (TestStatus.ERROR, TestStatus.FAILED) and is_timeout_message(message):
+            # A test that hangs is a failing test, wherever in its lifecycle it hung.
+            status = TestStatus.FAILED
+            if test_id not in results.timed_out:
+                results.timed_out.append(test_id)
+        try:
+            seconds = float(case.get("time", "0") or 0)
+        except ValueError:
+            seconds = 0.0
+        results.seconds[test_id] = results.seconds.get(test_id, 0.0) + seconds
         previous = results.tests.get(test_id)
         if previous is None or _SEVERITY[status] > _SEVERITY[previous]:
             results.tests[test_id] = status

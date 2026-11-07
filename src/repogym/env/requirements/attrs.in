@@ -14,3 +14,4 @@ pympler
 pytest-xdist[psutil]
 zope.interface
 editables
+pytest-timeout
