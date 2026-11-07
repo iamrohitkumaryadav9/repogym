@@ -95,8 +95,8 @@ def test_extracted_tree_matches_the_agents_final_work_byte_for_byte(env):
             "str_replace",
             {
                 "path": "tomlkit/__init__.py",
-                "old": "from tomlkit.api import",
-                "new": "from tomlkit.api import  ",
+                "old": "__version__ = ",
+                "new": "__version__  =  ",
             },
         ),
         ("bash", {"command": "printf '\\x00\\x01\\xff binary' > tomlkit/blob.bin"}),
