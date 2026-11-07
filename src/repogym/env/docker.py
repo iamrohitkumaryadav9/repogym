@@ -14,9 +14,11 @@ from pathlib import Path
 import structlog
 
 from repogym.config import (
+    BUILDER_NAME,
     CONTAINER_CPUS,
     CONTAINER_MEMORY,
     IMAGE_LABEL,
+    PER_TEST_TIMEOUT_SECONDS,
     PYTHON_IMAGE,
     REPOS_DIR,
     RUN_TIMEOUT_SECONDS,
@@ -46,6 +48,16 @@ def check_docker() -> None:
     done = _docker("version", "--format", "{{.Server.Version}}")
     if done.returncode != 0:
         raise DockerUnavailable(done.stderr.strip() or "docker is not reachable")
+
+
+def ensure_builder() -> None:
+    """Create RepoGym's own buildx builder, so its build cache can be measured and pruned alone."""
+    if _docker("buildx", "inspect", BUILDER_NAME).returncode == 0:
+        return
+    done = _docker("buildx", "create", "--name", BUILDER_NAME, "--driver", "docker-container")
+    if done.returncode != 0:
+        raise RuntimeError(f"Creating builder {BUILDER_NAME} failed: {done.stderr.strip()}")
+    _docker("buildx", "inspect", "--bootstrap", BUILDER_NAME)
 
 
 def build_image(spec: RepoSpec) -> None:
@@ -83,6 +95,7 @@ def run_tests(
     test_files: list[str],
     require_test_files: bool = True,
     timeout: int = RUN_TIMEOUT_SECONDS,
+    per_test_timeout: int = PER_TEST_TIMEOUT_SECONDS,
 ) -> TestRun:
     """Run one job in a fresh, network-less, memory-limited container, always removed after."""
     job = {
@@ -92,6 +105,7 @@ def run_tests(
         "test_patch": test_patch,
         "test_files": test_files,
         "require_test_files": require_test_files,
+        "per_test_timeout": per_test_timeout,
         "submodule_mirrors": {
             url: f"{_CONTAINER_REPOS}/{mirror}.git"
             for url, mirror in spec.submodule_mirrors.items()
@@ -145,6 +159,8 @@ def _parse_run(returncode: int, stdout: str, stderr: str) -> TestRun:
         tests=parsed.tests,
         collection_errors=parsed.collection_errors,
         duration_seconds=payload.get("duration", 0.0),
+        test_seconds=parsed.seconds,
+        timed_out=parsed.timed_out,
         detail=parsed.first_error,
         pytest_exit_code=payload.get("exit_code"),
     )
@@ -166,8 +182,32 @@ def parse_size(text: str) -> int:
 @dataclass(frozen=True)
 class DiskUsage:
     total_bytes: int
-    repogym_bytes: int
     by_type: dict[str, int]
+    repogym_image_bytes: int
+    repogym_build_cache_bytes: int
+    builder_image_bytes: int
+
+    @property
+    def repogym_bytes(self) -> int:
+        return self.repogym_image_bytes + self.repogym_build_cache_bytes + self.builder_image_bytes
+
+
+def _repogym_image_bytes(rows: list[dict[str, str]]) -> int:
+    """Unique layers of every repogym image, plus their shared layers counted once.
+
+    The largest per-image SharedSize stands in for the shared base (python + git); repogym's
+    images all start from it, so it is an upper bound on what they share.
+    """
+    unique = sum(parse_size(row.get("UniqueSize", "0B")) for row in rows)
+    shared = max((parse_size(row.get("SharedSize", "0B")) for row in rows), default=0)
+    return unique + shared
+
+
+def parse_buildx_du_total(text: str) -> int:
+    for line in reversed(text.splitlines()):
+        if line.strip().lower().startswith("total:"):
+            return parse_size(line.split(":", 1)[1].strip())
+    return 0
 
 
 def disk_usage() -> DiskUsage:
@@ -178,12 +218,31 @@ def disk_usage() -> DiskUsage:
     for line in done.stdout.splitlines():
         row = json.loads(line)
         by_type[row["Type"]] = parse_size(row["Size"])
-    images = _docker(
-        "image", "ls", "--filter", f"label={IMAGE_LABEL}", "--format", "{{.ID}} {{.Size}}"
+
+    ids = set(_docker("image", "ls", "-q", "--filter", f"label={IMAGE_LABEL}").stdout.split())
+    verbose = _docker("system", "df", "-v", "--format", "{{json .Images}}")
+    rows = json.loads(verbose.stdout or "[]") if verbose.returncode == 0 else []
+    ours = [row for row in rows if row.get("ID", "").replace("sha256:", "")[:12] in ids]
+
+    cache = _docker("buildx", "du", "--builder", BUILDER_NAME)
+    cache_bytes = parse_buildx_du_total(cache.stdout) if cache.returncode == 0 else 0
+    builder_image = _docker("image", "ls", "--format", "{{.Size}}", "moby/buildkit")
+    builder_bytes = sum(parse_size(size) for size in builder_image.stdout.split())
+    return DiskUsage(
+        total_bytes=sum(by_type.values()),
+        by_type=by_type,
+        repogym_image_bytes=_repogym_image_bytes(ours),
+        repogym_build_cache_bytes=cache_bytes,
+        builder_image_bytes=builder_bytes,
     )
-    # Layer sharing makes this an upper bound on what repogym actually occupies.
-    sizes = dict(line.split(" ", 1) for line in images.stdout.splitlines() if line.strip())
-    return DiskUsage(sum(by_type.values()), sum(parse_size(s) for s in sizes.values()), by_type)
+
+
+def prune_build_cache() -> str:
+    """Prune only RepoGym's builder; other projects' build cache is untouched."""
+    done = _docker("buildx", "prune", "--builder", BUILDER_NAME, "--all", "--force")
+    if done.returncode != 0:
+        raise RuntimeError(done.stderr.strip())
+    return done.stdout.strip().splitlines()[-1] if done.stdout.strip() else "nothing to prune"
 
 
 def clean(keep_images: set[str], other_projects: bool = False) -> dict[str, int]:

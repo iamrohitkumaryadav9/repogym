@@ -1,8 +1,9 @@
 # One slim image per repository: test dependencies only, never the repo's code.
 ARG PYTHON_IMAGE
 FROM ${PYTHON_IMAGE}
+ARG APT_PACKAGES=""
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git ${APT_PACKAGES} \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system safe.directory '*' \
     && git config --system protocol.file.allow always \
