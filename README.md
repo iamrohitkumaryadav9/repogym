@@ -238,11 +238,24 @@ cut at a line break near 3,000 characters), PR title and PR labels. It asks for 
   responses are cached under `data/cache/llm/`, keyed by model, prompt version and prompt, so reruns
   cost nothing. A rerun always tries the primary model again before reusing a fallback answer, so
   fallback labels move to the primary model when it is available.
-* **Validation**: the JSON is checked strictly: exact keys, a known `task_type`, a confidence in
-  [0, 1] and a non-empty rationale. Malformed output is never cached and is retried once, fresh.
-  After a second failure the task is `"unknown"` and the error is recorded.
-* **Provenance**: every label records the model that produced it and the prompt version
-  (`task-type-v1`). Calibration is reported separately per model.
+* **Validation**: a 200 response only counts if it has a candidate, non-empty text and
+  `finishReason` `STOP`. SAFETY, MAX_TOKENS, RECITATION or a missing reason means the answer may
+  be partial, so it counts as a failure. The JSON is then checked strictly: exact keys, a known
+  `task_type`, a confidence in [0, 1] and a non-empty rationale. An answer is validated *before* it
+  is cached, so nothing invalid is ever stored. A bad answer is retried once, fresh. After a second
+  failure, or once every retry is exhausted, the task is `"unknown"` with the error recorded. A
+  label is never guessed. `repogym llm-audit` re-checks every cache entry.
+* **Determinism and provenance**: requests use temperature 0 and a response schema. Every label
+  records the model, prompt version (`task-type-v1`), finish reason and whether it came from the
+  cache. Calibration is reported separately per model.
+
+**Official model: `gemini-3.5-flash-lite`.** The first calibration run used `gemini-3.8-flash` as
+the primary. It hit 309 HTTP 429 (rate-limit) responses in 85 tasks, consistent with free-tier
+limits, so 79 of the 85 labels came from the fallback anyway. To keep every label from one model,
+`gemini-3.5-flash-lite` is now both `GEMINI_MODEL` and `GEMINI_FALLBACK_MODEL`, and the dataset's
+task-type labels come only from it. `gemini-3.8-flash` is kept for an optional comparison run
+(`repogym classify --model gemini-3.8-flash --out <file>`, which uses no fallback). Its earlier
+answers stay in the cache under their own model key.
 
 **Calibration before use.** `repogym sheets` writes two blind CSV sheets to `data/labelling/`.
 They hide our own predictions, which go in a separate `*.key.json`.
