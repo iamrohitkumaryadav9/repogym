@@ -14,11 +14,12 @@ whether a patch fixes it. Every task is validated in Docker by three checks befo
 | **Funnel** | 1,794 merged PRs (3 years) → 271 candidates → 247 verified. **91.1%** of candidates survive validation |
 | **Rejections (24)** | 19 nothing fails without the fix · 3 no runnable test file · 2 the fix doesn't make the tests pass |
 | **FAIL_TO_PASS tests per task** | 1 test: 129 · 2–5: 88 · 6+: 30. Median diff 45 lines, median test run 1.75 s |
-| **task_type** | *pending: consensus labelling is still running* |
-| **task_type sources** | *pending* · human (30) > github > classifier > unknown |
+| **task_type** | bug 216 · feature 22 · other 5 · unknown 4 |
+| **task_type sources** (precedence human > github > classifier) | human 30 · github 55 · classifier 158 · unknown 4 |
 | **Task-type classifier vs human labels** | accuracy 0.90, **Cohen's κ 0.75** (n = 30) |
 | **Task-type classifier vs GitHub labels** | accuracy 0.97, **κ 0.88** (n = 73) |
-| **Classifier run-to-run stability** | *pending* (3 runs per task, temperature 0) |
+| **Classifier 3-run consensus** | label applied to 170 of 174 tasks without a GitHub label (3 dropped for disagreement, 1 for low confidence). Agrees with your labels on 12 of 12 overlapping tasks |
+| **Classifier run-to-run stability** | all 3 runs agree on 171/174 tasks (**98.3%**); pairwise 516/522 (98.9%), temperature 0 |
 | **Spec check vs human labels, blind** | precision 0.67 · recall 0.75 · **F1 0.71** (n = 25) |
 | **Spec check, adjudicated** | precision 0.67 · recall 0.75 · **F1 0.71**. 3 false positives adjudicated; human labels upheld in all 3 |
 | **spec_clear in the release** | 239 clear, 8 unclear. Source: 25 human, 222 heuristic |

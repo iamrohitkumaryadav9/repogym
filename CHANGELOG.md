@@ -14,8 +14,8 @@ First frozen dataset: 247 verified tasks from 5 Python repositories, with time-b
   - train: 172 tasks merged before 2026-07-10
   - dev: 25 tasks merged 2026-07-10 to 2026-08-17
   - test: 50 tasks merged on or after 2026-08-18
-- `task_type`: bug {{BUG}}, feature {{FEATURE}}, other {{OTHER}}, unknown {{UNKNOWN}}.
-  - Sources: human 30, github {{GITHUB}}, classifier {{CLASSIFIER}}, unknown {{UNKNOWN}}.
+- `task_type`: bug 216, feature 22, other 5, unknown 4.
+  - Sources: human 30, github 55, classifier 158, unknown 4.
 - `spec_clear`: 239 clear, 8 unclear.
   - Sources: human 25, heuristic 222.
 
@@ -37,9 +37,9 @@ First frozen dataset: 247 verified tasks from 5 Python repositories, with time-b
   - Retries with exponential backoff and jitter, with throttling.
 - Three-run consensus for the 174 tasks without a GitHub type label. A label is applied only if
   all 3 runs agree with confidence ≥ 0.9.
-  - Applied: {{APPLIED}}. Dropped for disagreement: {{DISAGREE}}. Low confidence: {{LOWCONF}}.
-    Failed run: {{FAILED}}.
-  - Run-to-run agreement: {{STABILITY}}.
+  - Applied: 170 of 174 (bug 150, feature 15, other 5). Dropped for disagreement: 3. Low confidence: 1.
+    Failed run: 0.
+  - Run-to-run agreement: all 3 runs agree on 171/174 tasks (98.3%), pairwise 516/522 (98.9%); the consensus matches the human label on all 12 tasks where both exist.
 - Calibration against 30 blind human labels: accuracy 0.90, κ 0.75. Against GitHub labels:
   accuracy 0.97, κ 0.88 (n = 73).
 - Spec check against 25 blind human labels: precision 0.67, recall 0.75, F1 0.71.
