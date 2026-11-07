@@ -20,7 +20,8 @@ class ReleaseTask(BaseModel):
 
     task_id: str
     repo: str
-    split: str
+    split: str  # primary: per-repo time-based split
+    split_global: str  # secondary: one set of cutoff dates for all repos (contamination analysis)
     merged_at: str
     created_at: str
     pr_url: str
@@ -55,10 +56,11 @@ def merge_day(merged_at: str) -> str:
     return merged_at[:10]
 
 
-def _cut(day_counts: list[tuple[str, int]], target: float) -> int:
+def _cut(day_counts: list[tuple[str, int]], target: float, at_least_one: bool = False) -> int:
     """How many of the newest days to take so their task count is closest to ``target``.
 
-    Ties go to the smaller split. Whole days only, so a date is never split.
+    Ties go to the smaller split. Whole days only, so a date is never split. With
+    ``at_least_one``, take at least one day as long as one is left over for the older splits.
     """
     best, best_gap, total = 0, target, 0
     for taken, (_, count) in enumerate(reversed(day_counts), start=1):
@@ -68,6 +70,8 @@ def _cut(day_counts: list[tuple[str, int]], target: float) -> int:
             best, best_gap = taken, gap
         if total >= target:
             break
+    if at_least_one and best == 0 and len(day_counts) > 1:
+        best = 1
     return best
 
 
@@ -75,6 +79,7 @@ def assign_splits(
     merged_at: dict[str, str],
     test_fraction: float = TEST_FRACTION,
     dev_fraction: float = DEV_FRACTION,
+    at_least_one: bool = False,
 ) -> SplitResult:
     """Newest ~``test_fraction`` of tasks by merge date is test, the next ~``dev_fraction`` dev.
 
@@ -86,9 +91,9 @@ def assign_splits(
     n = len(merged_at)
     days = Counter(merge_day(m) for m in merged_at.values())
     day_counts = sorted(days.items())
-    n_test_days = _cut(day_counts, n * test_fraction)
+    n_test_days = _cut(day_counts, n * test_fraction, at_least_one)
     remaining = day_counts[: len(day_counts) - n_test_days]
-    n_dev_days = _cut(remaining, n * dev_fraction)
+    n_dev_days = _cut(remaining, n * dev_fraction, at_least_one)
     test_days = {d for d, _ in day_counts[len(day_counts) - n_test_days :]}
     dev_days = {d for d, _ in remaining[len(remaining) - n_dev_days :]} if n_dev_days else set()
 
@@ -110,6 +115,49 @@ def assign_splits(
     )
 
 
+MIN_TASKS_FOR_ALL_SPLITS = 10
+
+
+@dataclass(frozen=True)
+class PerRepoSplit:
+    splits: dict[str, str]  # task_id -> train | dev | test
+    by_repo: dict[str, SplitResult]  # each repo's own cutoff dates
+
+
+def assign_splits_per_repo(
+    merged_at: dict[str, str],
+    repos: dict[str, str],
+    test_fraction: float = TEST_FRACTION,
+    dev_fraction: float = DEV_FRACTION,
+    min_tasks_for_all_splits: int = MIN_TASKS_FOR_ALL_SPLITS,
+) -> PerRepoSplit:
+    """The time-based split applied within each repo, so every split covers every repo.
+
+    Each repo's newest ~20% (by merge date, whole UTC days) is test and the next ~10% dev. A repo
+    with at least ``min_tasks_for_all_splits`` tasks always gets at least one day in dev and in
+    test, and keeps at least one day in train.
+    """
+    by_repo: dict[str, dict[str, str]] = {}
+    for task, merged in merged_at.items():
+        by_repo.setdefault(repos[task], {})[task] = merged
+    results = {
+        repo: assign_splits(
+            dates, test_fraction, dev_fraction, at_least_one=len(dates) >= min_tasks_for_all_splits
+        )  # fmt: skip
+        for repo, dates in sorted(by_repo.items())
+    }
+    splits = {task: split for r in results.values() for task, split in r.splits.items()}
+    return PerRepoSplit(splits=splits, by_repo=results)
+
+
+def expected_split(day: str, dev_cutoff: str | None, test_cutoff: str | None) -> str:
+    if test_cutoff and day >= test_cutoff:
+        return "test"
+    if dev_cutoff and day >= dev_cutoff:
+        return "dev"
+    return "train"
+
+
 def split_counts(splits: dict[str, str], repos: dict[str, str]) -> dict[str, dict[str, int]]:
     """{split: {repo: count}} for every split present."""
     counts: dict[str, Counter[str]] = {}
@@ -126,18 +174,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _split_view(tasks: list[ReleaseTask], field: str) -> dict:
+    per_split = split_counts({t.task_id: getattr(t, field) for t in tasks},
+                             {t.task_id: t.repo for t in tasks})  # fmt: skip
+    return {
+        "counts": {name: sum(c.values()) for name, c in per_split.items()},
+        "per_repo": per_split,
+    }
+
+
 def build_manifest(
     version: str,
     tasks: list[ReleaseTask],
-    split: SplitResult,
+    primary: PerRepoSplit,
+    global_split: SplitResult,
     image_ids: dict[str, str],
     repogym_commit: str,
     tasks_sha256: str,
     extra: dict | None = None,
 ) -> dict:
     ordered = sorted(tasks, key=lambda t: (t.merged_at, t.task_id))
-    per_split = split_counts({t.task_id: t.split for t in ordered},
-                             {t.task_id: t.repo for t in ordered})  # fmt: skip
 
     def counts(field: str) -> dict[str, int]:
         return dict(sorted(Counter(getattr(t, field) for t in ordered).items()))
@@ -154,14 +210,24 @@ def build_manifest(
             image: image_ids[image] for image in sorted({t.docker_image for t in ordered})
         },
         "splits": {
-            "method": "by PR merge date (UTC days, never split): newest ~20% test, next ~10% dev, "
-            "rest train",
-            "test_cutoff_date": split.test_cutoff,
-            "dev_cutoff_date": split.dev_cutoff,
-            "dev_start": split.dev_start,
-            "test_start": split.test_start,
-            "counts": {name: sum(c.values()) for name, c in per_split.items()},
-            "per_repo": per_split,
+            "primary": {
+                "field": "split",
+                "method": "per repo, by PR merge date (UTC days, never split): each repo's newest "
+                "~20% test, next ~10% dev, rest train",
+                "per_repo_cutoffs": {
+                    repo: {"dev_cutoff_date": r.dev_cutoff, "test_cutoff_date": r.test_cutoff}
+                    for repo, r in sorted(primary.by_repo.items())
+                },
+                **_split_view(ordered, "split"),
+            },
+            "global": {
+                "field": "split_global",
+                "method": "one set of cutoff dates for all repos (UTC days, never split): newest "
+                "~20% test, next ~10% dev, rest train; for contamination analysis",
+                "dev_cutoff_date": global_split.dev_cutoff,
+                "test_cutoff_date": global_split.test_cutoff,
+                **_split_view(ordered, "split_global"),
+            },
         },
         "merged_at_range": [ordered[0].merged_at, ordered[-1].merged_at] if ordered else None,
         "labels": {
@@ -204,16 +270,17 @@ def validate_release(out_dir: Path) -> list[str]:
         problems.append("a task uses an image missing from the manifest")
     if any(not d.startswith("sha256:") for d in manifest["docker_images"].values()):
         problems.append("an image digest is missing")
-    test_cutoff, dev_cutoff = (
-        manifest["splits"]["test_cutoff_date"],
-        manifest["splits"]["dev_cutoff_date"],
-    )
+    primary = manifest["splits"]["primary"]["per_repo_cutoffs"]
+    global_view = manifest["splits"]["global"]
     for t in tasks:
         day = merge_day(t.merged_at)
-        expected = ("test" if test_cutoff and day >= test_cutoff
-                    else "dev" if dev_cutoff and day >= dev_cutoff else "train")  # fmt: skip
-        if t.split != expected:
-            problems.append(f"{t.task_id}: split {t.split} disagrees with the cutoff dates")
+        cut = primary.get(t.repo, {})
+        if t.split != expected_split(day, cut.get("dev_cutoff_date"), cut.get("test_cutoff_date")):
+            problems.append(f"{t.task_id}: split {t.split} disagrees with its repo's cutoffs")
+        if t.split_global != expected_split(
+            day, global_view["dev_cutoff_date"], global_view["test_cutoff_date"]
+        ):
+            problems.append(f"{t.task_id}: split_global disagrees with the global cutoffs")
         if not t.fail_to_pass:
             problems.append(f"{t.task_id}: empty FAIL_TO_PASS")
         if set(t.fail_to_pass) & set(t.pass_to_pass):
@@ -227,7 +294,8 @@ def write_release(
     out_dir: Path,
     version: str,
     tasks: list[ReleaseTask],
-    split: SplitResult,
+    primary: PerRepoSplit,
+    global_split: SplitResult,
     image_ids: dict[str, str],
     repogym_commit: str,
     extra: dict | None = None,
@@ -240,7 +308,8 @@ def write_release(
     tasks_path = out_dir / "tasks.jsonl"
     tasks_path.write_text("".join(t.model_dump_json() + "\n" for t in ordered), encoding="utf-8")
     manifest = build_manifest(
-        version, ordered, split, image_ids, repogym_commit, sha256_file(tasks_path), extra
-    )
+        version, ordered, primary, global_split, image_ids, repogym_commit,
+        sha256_file(tasks_path), extra,
+    )  # fmt: skip
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

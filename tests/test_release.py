@@ -5,6 +5,7 @@ import pytest
 from repogym.release import (
     ReleaseTask,
     assign_splits,
+    assign_splits_per_repo,
     sha256_file,
     split_counts,
     validate_release,
@@ -102,12 +103,26 @@ def test_small_inputs():
 
 def _task(task_id, merged, split, repo="pallets/click"):
     return ReleaseTask(
-        task_id=task_id, repo=repo, split=split, merged_at=merged, created_at=merged,
-        pr_url="u", issue_url="u", base_commit="abc", issue_title="t", issue_body="b",
-        gold_patch="g", test_patch="t", fail_to_pass=["m::a"], pass_to_pass=[],
+        task_id=task_id, repo=repo, split=split, split_global=split, merged_at=merged,
+        created_at=merged, pr_url="u", issue_url="u", base_commit="abc", issue_title="t",
+        issue_body="b", gold_patch="g", test_patch="t", fail_to_pass=["m::a"], pass_to_pass=[],
         docker_image="repogym/click:base", task_type="bug", task_type_source="github",
         spec_clear=True, spec_clear_source="heuristic", spec_check_clear=True, spec_issues=[],
     )  # fmt: skip
+
+
+def _release(tmp_path, tasks, name="v", **kwargs):
+    """Assign both splits the way release_build does, then write the release."""
+    merged = {t.task_id: t.merged_at for t in tasks}
+    primary = assign_splits_per_repo(merged, {t.task_id: t.repo for t in tasks})
+    global_split = assign_splits(merged)
+    tasks = [t.model_copy(update={"split": primary.splits[t.task_id],
+                                  "split_global": global_split.splits[t.task_id]})
+             for t in tasks]  # fmt: skip
+    out = tmp_path / name
+    manifest = write_release(out, name, tasks, primary, global_split,
+                             {"repogym/click:base": "sha256:1"}, "c0ffee", **kwargs)  # fmt: skip
+    return out, manifest
 
 
 def test_release_writes_tasks_and_a_manifest(tmp_path):
@@ -115,54 +130,133 @@ def test_release_writes_tasks_and_a_manifest(tmp_path):
         _task("b", "2024-02-01T00:00:00Z", "test"),
         _task("a", "2024-01-01T00:00:00Z", "train"),
     ]
-    split = assign_splits({t.task_id: t.merged_at for t in tasks}, 0.5, 0)
-    out = tmp_path / "v0.1"
-    manifest = write_release(
-        out, "v0.1", tasks, split, {"repogym/click:base": "sha256:1"}, "c0ffee"
-    )
+    out, manifest = _release(tmp_path, tasks, "v0.1")
     lines = (out / "tasks.jsonl").read_text().splitlines()
     assert [json.loads(line)["task_id"] for line in lines] == ["a", "b"]  # sorted by merge time
     assert manifest["task_count"] == 2
     assert manifest["tasks_sha256"] == sha256_file(out / "tasks.jsonl")
     assert manifest["docker_images"] == {"repogym/click:base": "sha256:1"}
     assert manifest["repogym_commit"] == "c0ffee"
-    assert manifest["splits"]["counts"] == {"test": 1, "train": 1}
     assert json.loads((out / "manifest.json").read_text()) == manifest
+    assert validate_release(out) == []
 
 
-def _written(tmp_path):
-    tasks = [_task(f"t{i}", f"2024-01-{i + 1:02d}T00:00:00Z", "train") for i in range(10)]
-    split = assign_splits({t.task_id: t.merged_at for t in tasks})
-    tasks = [t.model_copy(update={"split": split.splits[t.task_id]}) for t in tasks]
-    out = tmp_path / "v"
-    manifest = write_release(out, "v", tasks, split, {"repogym/click:base": "sha256:1"}, "c0ffee",
+def _two_repos():
+    # click: 20 tasks over 20 days; attrs: 10 older tasks, so a global cut leaves attrs out of test.
+    tasks = [_task(f"c{i:02d}", f"2024-02-{i + 1:02d}T00:00:00Z", "", "pallets/click")
+             for i in range(20)]  # fmt: skip
+    tasks += [_task(f"a{i:02d}", f"2024-01-{i + 1:02d}T00:00:00Z", "", "python-attrs/attrs")
+              for i in range(10)]  # fmt: skip
+    return tasks
+
+
+def test_manifest_records_both_split_views_cutoffs_and_labels(tmp_path):
+    out, manifest = _release(tmp_path, _two_repos(),
                              extra={"classifier": {"models": ["m"], "prompt_version": "p"}})  # fmt: skip
-    return out, manifest
-
-
-def test_manifest_records_cutoffs_label_sources_and_classifier(tmp_path):
-    out, manifest = _written(tmp_path)
-    assert manifest["splits"]["test_cutoff_date"] == "2024-01-09"
-    assert manifest["splits"]["dev_cutoff_date"] == "2024-01-08"
-    assert manifest["splits"]["per_repo"]["test"] == {"pallets/click": 2}
-    assert manifest["labels"]["task_type_source"] == {"github": 10}
+    primary, global_view = manifest["splits"]["primary"], manifest["splits"]["global"]
+    assert primary["per_repo_cutoffs"] == {
+        "pallets/click": {"dev_cutoff_date": "2024-02-15", "test_cutoff_date": "2024-02-17"},
+        "python-attrs/attrs": {"dev_cutoff_date": "2024-01-08", "test_cutoff_date": "2024-01-09"},
+    }
+    assert primary["per_repo"]["test"] == {"pallets/click": 4, "python-attrs/attrs": 2}
+    assert primary["per_repo"]["dev"] == {"pallets/click": 2, "python-attrs/attrs": 1}
+    # The global view is the old behaviour: attrs is entirely older than the global cutoffs.
+    assert global_view["test_cutoff_date"] == "2024-02-15"
+    assert "python-attrs/attrs" not in global_view["per_repo"]["test"]
+    assert manifest["labels"]["task_type_source"] == {"github": 30}
     assert manifest["classifier"]["prompt_version"] == "p"
     assert validate_release(out) == []
 
 
 def test_validation_catches_a_tampered_tasks_file(tmp_path):
-    out, _ = _written(tmp_path)
+    out, _ = _release(tmp_path, _two_repos())
     path = out / "tasks.jsonl"
     path.write_text(path.read_text().replace('"split":"train"', '"split":"test"', 1))
     problems = validate_release(out)
-    assert any("sha256" in p for p in problems) and any("cutoff" in p for p in problems)
+    assert any("sha256" in p for p in problems) and any("repo's cutoffs" in p for p in problems)
 
 
 def test_releases_are_never_overwritten(tmp_path):
     out = tmp_path / "v0.1"
     out.mkdir()
     with pytest.raises(FileExistsError):
-        write_release(out, "v0.1", [], assign_splits({}), {}, "c0ffee")
+        write_release(out, "v0.1", [], assign_splits_per_repo({}, {}), assign_splits({}), {}, "c")
+
+
+# -- per-repo split ---------------------------------------------------------------------------
+
+
+def _repo_dates(spec):
+    """{repo: n_tasks} -> merged_at and repos, one task per day per repo, newest repo last."""
+    from datetime import date, timedelta
+
+    merged, repos = {}, {}
+    for r, (repo, n) in enumerate(spec.items()):
+        for i in range(n):
+            task = f"{repo}-{i:03d}"
+            merged[task] = f"{date(2024, 1, 1) + timedelta(days=100 * r + i)}T12:00:00Z"
+            repos[task] = repo
+    return merged, repos
+
+
+def test_per_repo_split_balances_every_repo():
+    merged, repos = _repo_dates({"r/a": 70, "r/b": 50, "r/c": 20, "r/d": 10})
+    result = assign_splits_per_repo(merged, repos)
+    counts = split_counts(result.splits, repos)
+    assert counts["test"] == {"r/a": 14, "r/b": 10, "r/c": 4, "r/d": 2}
+    assert counts["dev"] == {"r/a": 7, "r/b": 5, "r/c": 2, "r/d": 1}
+    # Within each repo, train < dev < test in time.
+    for repo in ("r/a", "r/b", "r/c", "r/d"):
+        mine = {t: s for t, s in result.splits.items() if repos[t] == repo}
+        last = {s: max(merged[t] for t, x in mine.items() if x == s) for s in set(mine.values())}
+        first = {s: min(merged[t] for t, x in mine.items() if x == s) for s in set(mine.values())}
+        assert last["train"] < first["dev"] and last["dev"] < first["test"]
+
+
+def test_per_repo_boundaries_are_that_repos_inclusive_dates():
+    merged, repos = _repo_dates({"r/a": 10, "r/b": 10})
+    merged["r/a-extra"], repos["r/a-extra"] = "2024-01-09T00:00:00Z", "r/a"  # cutoff day, 00:00
+    result = assign_splits_per_repo(merged, repos)
+    cut = result.by_repo["r/a"]
+    assert cut.test_cutoff == "2024-01-09" and result.splits["r/a-extra"] == "test"
+    assert result.by_repo["r/b"].test_cutoff != cut.test_cutoff  # each repo has its own dates
+
+
+def test_same_day_tasks_in_a_repo_are_never_separated():
+    merged, repos = _repo_dates({"r/a": 12})
+    for i in range(4):  # four extra tasks on the day a per-task cut would split
+        merged[f"same{i}"], repos[f"same{i}"] = f"2024-01-10T0{i}:00:00Z", "r/a"
+    result = assign_splits_per_repo(merged, repos)
+    assert len({result.splits[f"same{i}"] for i in range(4)} | {result.splits["r/a-009"]}) == 1
+
+
+def test_repo_with_enough_tasks_appears_in_every_split_even_when_rounding_says_zero():
+    # 10 tasks: dev target is 1.0; make the newest pre-test day hold 3 tasks so "closest" is 0.
+    merged, repos = _repo_dates({"r/a": 8})
+    for i in range(3):
+        merged[f"busy{i}"], repos[f"busy{i}"] = f"2024-01-07T0{i}:00:00Z", "r/a"
+    merged.pop("r/a-006")
+    result = assign_splits_per_repo(merged, repos)
+    assert set(result.splits.values()) == {"train", "dev", "test"}
+
+
+def test_small_repos():
+    # Below the minimum, a repo follows the plain closest-boundary rule and may skip dev or test.
+    merged, repos = _repo_dates({"r/one": 1, "r/two": 2, "r/four": 4})
+    result = assign_splits_per_repo(merged, repos)
+    assert result.splits["r/one-000"] == "train"
+    assert result.by_repo["r/one"].test_cutoff is None
+    two = sorted(s for t, s in result.splits.items() if repos[t] == "r/two")
+    assert two == ["train", "train"]  # targets 0.4 and 0.2 round to nothing
+    four = [result.splits[f"r/four-{i:03d}"] for i in range(4)]
+    assert four == ["train", "train", "train", "test"]
+    assert assign_splits_per_repo({}, {}).splits == {}
+
+
+def test_a_repo_whose_tasks_share_one_day_is_all_train():
+    merged = {f"t{i}": f"2024-01-01T{i:02d}:00:00Z" for i in range(12)}
+    repos = dict.fromkeys(merged, "r/a")
+    assert set(assign_splits_per_repo(merged, repos).splits.values()) == {"train"}
 
 
 def test_spec_sample_includes_every_flagged_task_and_every_repo():
