@@ -2,37 +2,102 @@ import json
 
 import pytest
 
-from repogym.release import ReleaseTask, assign_splits, sha256_file, write_release
+from repogym.release import (
+    ReleaseTask,
+    assign_splits,
+    sha256_file,
+    split_counts,
+    validate_release,
+    write_release,
+)
 from repogym.sheets import select_spec_sample, select_task_type_sample
 
 
-def _dates(n):
-    return {f"t{i:03d}": f"2024-01-{1 + i // 24:02d}T{i % 24:02d}:00:00Z" for i in range(n)}
+def _daily(n, start_day=1):
+    """One task per day: t000 on 2024-01-01, t001 on 2024-01-02, ..."""
+    from datetime import date, timedelta
+
+    first = date(2024, 1, start_day)
+    return {f"t{i:03d}": f"{first + timedelta(days=i)}T12:00:00Z" for i in range(n)}
+
+
+def _by_split(result):
+    out = {"train": [], "dev": [], "test": []}
+    for task, split in result.splits.items():
+        out[split].append(task)
+    return {k: sorted(v) for k, v in out.items()}
 
 
 def test_newest_twenty_percent_is_test_next_ten_percent_dev():
-    dates = _dates(100)
+    dates = _daily(100)
     result = assign_splits(dates)
-    by_split = {
-        s: sorted(t for t, v in result.splits.items() if v == s) for s in ("train", "dev", "test")
-    }
+    by_split = _by_split(result)
     assert [len(by_split[s]) for s in ("train", "dev", "test")] == [70, 10, 20]
     assert max(dates[t] for t in by_split["train"]) < min(dates[t] for t in by_split["dev"])
     assert max(dates[t] for t in by_split["dev"]) < min(dates[t] for t in by_split["test"])
     assert result.test_start == min(dates[t] for t in by_split["test"])
-    assert result.dev_start == min(dates[t] for t in by_split["dev"])
+    assert result.test_cutoff == result.test_start[:10] and result.dev_cutoff == "2024-03-11"
 
 
-def test_splits_ignore_input_order_and_break_ties_by_id():
-    dates = {"b": "2024-01-01T00:00:00Z", "a": "2024-01-01T00:00:00Z", "c": "2023-01-01T00:00:00Z"}
-    first = assign_splits(dates, test_fraction=1 / 3, dev_fraction=0).splits
-    second = assign_splits(dict(reversed(list(dates.items()))), 1 / 3, 0).splits
-    assert first == second and first["b"] == "test" and first["a"] == "train"
+def test_boundary_is_an_inclusive_utc_date():
+    dates = _daily(10)  # test target 2 -> the last two days, 2024-01-09 and 2024-01-10
+    dates["midnight"] = "2024-01-09T00:00:00Z"  # first second of the cutoff date -> test
+    dates["late"] = "2024-01-08T23:59:59Z"  # last second before it -> not test
+    result = assign_splits(dates)
+    assert result.test_cutoff == "2024-01-09"
+    assert result.splits["midnight"] == "test" and result.splits["late"] != "test"
+    assert all((s == "test") == (dates[t][:10] >= "2024-01-09") for t, s in result.splits.items())
+
+
+def test_tasks_merged_on_the_same_date_are_never_split():
+    dates = _daily(18)
+    # Five tasks on the date where a per-task cut would fall (the 20% boundary).
+    for i in range(5):
+        dates[f"same{i}"] = f"2024-01-17T0{i}:00:00Z"
+    result = assign_splits(dates)
+    assert len({result.splits[f"same{i}"] for i in range(5)} | {result.splits["t016"]}) == 1
+    by_day = {}
+    for task, split in result.splits.items():
+        by_day.setdefault(dates[task][:10], set()).add(split)
+    assert all(len(splits) == 1 for splits in by_day.values())
+
+
+def test_cut_is_the_day_boundary_closest_to_the_target():
+    # 20 tasks: 10% dev, 20% test -> targets 2 and 4. Newest day holds 3, the day before 3.
+    dates = _daily(14)
+    dates |= {f"n{i}": f"2024-02-01T0{i}:00:00Z" for i in range(3)}
+    dates |= {f"m{i}": f"2024-01-31T0{i}:00:00Z" for i in range(3)}
+    result = assign_splits(dates)
+    sizes = {k: len(v) for k, v in _by_split(result).items()}
+    # Test: 3 (one day, gap 1) beats 6 (two days, gap 2). Dev: the next day has 3 (gap 1)
+    # versus none (gap 2), so dev takes it.
+    assert sizes == {"train": 14, "dev": 3, "test": 3}
+
+
+def test_splits_ignore_input_order():
+    dates = _daily(30)
+    dates |= {"x": "2024-01-30T01:00:00Z", "y": "2024-01-30T02:00:00Z"}
+    first = assign_splits(dates).splits
+    assert first == assign_splits(dict(reversed(list(dates.items())))).splits
+
+
+def test_per_repo_counts_per_split():
+    dates = _daily(10)
+    repos = {t: ("r/a" if i % 2 else "r/b") for i, t in enumerate(sorted(dates))}
+    counts = split_counts(assign_splits(dates).splits, repos)
+    assert counts == {
+        "dev": {"r/a": 1},
+        "test": {"r/a": 1, "r/b": 1},
+        "train": {"r/a": 3, "r/b": 4},
+    }
+    assert sum(sum(c.values()) for c in counts.values()) == 10
 
 
 def test_small_inputs():
     assert assign_splits({}).splits == {}
     assert assign_splits({"only": "2024-01-01T00:00:00Z"}).splits == {"only": "train"}
+    result = assign_splits({"only": "2024-01-01T00:00:00Z"})
+    assert result.test_cutoff is None and result.dev_cutoff is None
 
 
 def _task(task_id, merged, split, repo="pallets/click"):
@@ -40,7 +105,8 @@ def _task(task_id, merged, split, repo="pallets/click"):
         task_id=task_id, repo=repo, split=split, merged_at=merged, created_at=merged,
         pr_url="u", issue_url="u", base_commit="abc", issue_title="t", issue_body="b",
         gold_patch="g", test_patch="t", fail_to_pass=["m::a"], pass_to_pass=[],
-        docker_image="repogym/click:base", task_type="bug", spec_clear=True, spec_issues=[],
+        docker_image="repogym/click:base", task_type="bug", task_type_source="github",
+        spec_clear=True, spec_clear_source="heuristic", spec_check_clear=True, spec_issues=[],
     )  # fmt: skip
 
 
@@ -62,6 +128,34 @@ def test_release_writes_tasks_and_a_manifest(tmp_path):
     assert manifest["repogym_commit"] == "c0ffee"
     assert manifest["splits"]["counts"] == {"test": 1, "train": 1}
     assert json.loads((out / "manifest.json").read_text()) == manifest
+
+
+def _written(tmp_path):
+    tasks = [_task(f"t{i}", f"2024-01-{i + 1:02d}T00:00:00Z", "train") for i in range(10)]
+    split = assign_splits({t.task_id: t.merged_at for t in tasks})
+    tasks = [t.model_copy(update={"split": split.splits[t.task_id]}) for t in tasks]
+    out = tmp_path / "v"
+    manifest = write_release(out, "v", tasks, split, {"repogym/click:base": "sha256:1"}, "c0ffee",
+                             extra={"classifier": {"models": ["m"], "prompt_version": "p"}})  # fmt: skip
+    return out, manifest
+
+
+def test_manifest_records_cutoffs_label_sources_and_classifier(tmp_path):
+    out, manifest = _written(tmp_path)
+    assert manifest["splits"]["test_cutoff_date"] == "2024-01-09"
+    assert manifest["splits"]["dev_cutoff_date"] == "2024-01-08"
+    assert manifest["splits"]["per_repo"]["test"] == {"pallets/click": 2}
+    assert manifest["labels"]["task_type_source"] == {"github": 10}
+    assert manifest["classifier"]["prompt_version"] == "p"
+    assert validate_release(out) == []
+
+
+def test_validation_catches_a_tampered_tasks_file(tmp_path):
+    out, _ = _written(tmp_path)
+    path = out / "tasks.jsonl"
+    path.write_text(path.read_text().replace('"split":"train"', '"split":"test"', 1))
+    problems = validate_release(out)
+    assert any("sha256" in p for p in problems) and any("cutoff" in p for p in problems)
 
 
 def test_releases_are_never_overwritten(tmp_path):

@@ -33,9 +33,12 @@ class ReleaseTask(BaseModel):
     fail_to_pass: list[str]
     pass_to_pass: list[str]
     docker_image: str
-    task_type: str
+    task_type: str  # bug | feature | other | unknown
+    task_type_source: str  # human | github | classifier | unknown
     spec_clear: bool
-    spec_issues: list[str]
+    spec_clear_source: str  # human | heuristic
+    spec_check_clear: bool  # the heuristic check's own verdict, kept even when a human overrides
+    spec_issues: list[str]  # names the heuristic check flagged
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,29 @@ class SplitResult:
     splits: dict[str, str]  # task_id -> train | dev | test
     dev_start: str | None  # earliest merge time in dev
     test_start: str | None  # earliest merge time in test
+    dev_cutoff: str | None = None  # dev = merged on/after this UTC date and before test_cutoff
+    test_cutoff: str | None = None  # test = merged on/after this UTC date
+
+
+def merge_day(merged_at: str) -> str:
+    """UTC calendar date of an ISO-8601 merge time (GitHub gives UTC, ``...Z``)."""
+    return merged_at[:10]
+
+
+def _cut(day_counts: list[tuple[str, int]], target: float) -> int:
+    """How many of the newest days to take so their task count is closest to ``target``.
+
+    Ties go to the smaller split. Whole days only, so a date is never split.
+    """
+    best, best_gap, total = 0, target, 0
+    for taken, (_, count) in enumerate(reversed(day_counts), start=1):
+        total += count
+        gap = abs(total - target)
+        if gap < best_gap:
+            best, best_gap = taken, gap
+        if total >= target:
+            break
+    return best
 
 
 def assign_splits(
@@ -50,25 +76,46 @@ def assign_splits(
     test_fraction: float = TEST_FRACTION,
     dev_fraction: float = DEV_FRACTION,
 ) -> SplitResult:
-    """Most recent ``test_fraction`` by merge time is test, the next ``dev_fraction`` dev.
+    """Newest ~``test_fraction`` of tasks by merge date is test, the next ~``dev_fraction`` dev.
 
-    Ties are broken by task id, so the split is deterministic. Splitting by time, not at random,
-    means a model is never evaluated on fixes older than ones it was tuned on.
+    Splits are cut between UTC calendar days, so every task merged on a given date is in the same
+    split and each split is "merged on or after <date>". The cut is the day boundary that comes
+    closest to the target fraction. Splitting by time, not at random, means a model is never
+    evaluated on fixes older than ones it was tuned on.
     """
-    ordered = sorted(merged_at, key=lambda task: (merged_at[task], task))
-    n = len(ordered)
-    n_test = round(n * test_fraction)
-    n_dev = round(n * dev_fraction)
-    test = ordered[n - n_test :] if n_test else []
-    dev = ordered[n - n_test - n_dev : n - n_test] if n_dev else []
-    splits = {task: "train" for task in ordered}
-    splits.update({task: "dev" for task in dev})
-    splits.update({task: "test" for task in test})
+    n = len(merged_at)
+    days = Counter(merge_day(m) for m in merged_at.values())
+    day_counts = sorted(days.items())
+    n_test_days = _cut(day_counts, n * test_fraction)
+    remaining = day_counts[: len(day_counts) - n_test_days]
+    n_dev_days = _cut(remaining, n * dev_fraction)
+    test_days = {d for d, _ in day_counts[len(day_counts) - n_test_days :]}
+    dev_days = {d for d, _ in remaining[len(remaining) - n_dev_days :]} if n_dev_days else set()
+
+    splits = {}
+    for task, merged in merged_at.items():
+        day = merge_day(merged)
+        splits[task] = "test" if day in test_days else "dev" if day in dev_days else "train"
+
+    def first(name: str) -> str | None:
+        times = [merged_at[t] for t, s in splits.items() if s == name]
+        return min(times) if times else None
+
     return SplitResult(
         splits=splits,
-        dev_start=merged_at[dev[0]] if dev else None,
-        test_start=merged_at[test[0]] if test else None,
+        dev_start=first("dev"),
+        test_start=first("test"),
+        dev_cutoff=min(dev_days) if dev_days else None,
+        test_cutoff=min(test_days) if test_days else None,
     )
+
+
+def split_counts(splits: dict[str, str], repos: dict[str, str]) -> dict[str, dict[str, int]]:
+    """{split: {repo: count}} for every split present."""
+    counts: dict[str, Counter[str]] = {}
+    for task, name in splits.items():
+        counts.setdefault(name, Counter())[repos[task]] += 1
+    return {name: dict(sorted(c.items())) for name, c in sorted(counts.items())}
 
 
 def sha256_file(path: Path) -> str:
@@ -79,6 +126,103 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def build_manifest(
+    version: str,
+    tasks: list[ReleaseTask],
+    split: SplitResult,
+    image_ids: dict[str, str],
+    repogym_commit: str,
+    tasks_sha256: str,
+    extra: dict | None = None,
+) -> dict:
+    ordered = sorted(tasks, key=lambda t: (t.merged_at, t.task_id))
+    per_split = split_counts({t.task_id: t.split for t in ordered},
+                             {t.task_id: t.repo for t in ordered})  # fmt: skip
+
+    def counts(field: str) -> dict[str, int]:
+        return dict(sorted(Counter(getattr(t, field) for t in ordered).items()))
+
+    return {
+        "version": version,
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "task_count": len(ordered),
+        "per_repo": counts("repo"),
+        "tasks_file": "tasks.jsonl",
+        "tasks_sha256": tasks_sha256,
+        "repogym_commit": repogym_commit,
+        "docker_images": {
+            image: image_ids[image] for image in sorted({t.docker_image for t in ordered})
+        },
+        "splits": {
+            "method": "by PR merge date (UTC days, never split): newest ~20% test, next ~10% dev, "
+            "rest train",
+            "test_cutoff_date": split.test_cutoff,
+            "dev_cutoff_date": split.dev_cutoff,
+            "dev_start": split.dev_start,
+            "test_start": split.test_start,
+            "counts": {name: sum(c.values()) for name, c in per_split.items()},
+            "per_repo": per_split,
+        },
+        "merged_at_range": [ordered[0].merged_at, ordered[-1].merged_at] if ordered else None,
+        "labels": {
+            "task_type": counts("task_type"),
+            "task_type_source": counts("task_type_source"),
+            "task_type_by_source": {
+                source: dict(
+                    sorted(
+                        Counter(
+                            t.task_type for t in ordered if t.task_type_source == source
+                        ).items()
+                    )
+                )
+                for source in sorted({t.task_type_source for t in ordered})
+            },  # fmt: skip
+            "spec_clear": {str(k).lower(): v for k, v in counts("spec_clear").items()},
+            "spec_clear_source": counts("spec_clear_source"),
+        },
+        **(extra or {}),
+    }
+
+
+def validate_release(out_dir: Path) -> list[str]:
+    """Re-read a written release and check it against its manifest. Returns problems found."""
+    problems = []
+    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    tasks_path = out_dir / manifest["tasks_file"]
+    if sha256_file(tasks_path) != manifest["tasks_sha256"]:
+        problems.append("tasks.jsonl sha256 does not match the manifest")
+    tasks = [ReleaseTask.model_validate_json(line)
+             for line in tasks_path.read_text(encoding="utf-8").splitlines()]  # fmt: skip
+    ids = [t.task_id for t in tasks]
+    if len(ids) != len(set(ids)):
+        problems.append("duplicate task ids")
+    if len(tasks) != manifest["task_count"]:
+        problems.append("task count does not match the manifest")
+    if dict(sorted(Counter(t.repo for t in tasks).items())) != manifest["per_repo"]:
+        problems.append("per-repo counts do not match the manifest")
+    if any(t.docker_image not in manifest["docker_images"] for t in tasks):
+        problems.append("a task uses an image missing from the manifest")
+    if any(not d.startswith("sha256:") for d in manifest["docker_images"].values()):
+        problems.append("an image digest is missing")
+    test_cutoff, dev_cutoff = (
+        manifest["splits"]["test_cutoff_date"],
+        manifest["splits"]["dev_cutoff_date"],
+    )
+    for t in tasks:
+        day = merge_day(t.merged_at)
+        expected = ("test" if test_cutoff and day >= test_cutoff
+                    else "dev" if dev_cutoff and day >= dev_cutoff else "train")  # fmt: skip
+        if t.split != expected:
+            problems.append(f"{t.task_id}: split {t.split} disagrees with the cutoff dates")
+        if not t.fail_to_pass:
+            problems.append(f"{t.task_id}: empty FAIL_TO_PASS")
+        if set(t.fail_to_pass) & set(t.pass_to_pass):
+            problems.append(f"{t.task_id}: a test is in both FAIL_TO_PASS and PASS_TO_PASS")
+        if (t.task_type == "unknown") != (t.task_type_source == "unknown"):
+            problems.append(f"{t.task_id}: task_type and task_type_source disagree")
+    return problems
+
+
 def write_release(
     out_dir: Path,
     version: str,
@@ -86,6 +230,7 @@ def write_release(
     split: SplitResult,
     image_ids: dict[str, str],
     repogym_commit: str,
+    extra: dict | None = None,
 ) -> dict:
     """Write tasks.jsonl and manifest.json. Refuses to overwrite an existing release."""
     if out_dir.exists():
@@ -94,28 +239,8 @@ def write_release(
     ordered = sorted(tasks, key=lambda t: (t.merged_at, t.task_id))
     tasks_path = out_dir / "tasks.jsonl"
     tasks_path.write_text("".join(t.model_dump_json() + "\n" for t in ordered), encoding="utf-8")
-
-    per_split: dict[str, Counter[str]] = {}
-    for task in ordered:
-        per_split.setdefault(task.split, Counter())[task.repo] += 1
-    manifest = {
-        "version": version,
-        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "task_count": len(ordered),
-        "per_repo": dict(sorted(Counter(t.repo for t in ordered).items())),
-        "tasks_sha256": sha256_file(tasks_path),
-        "repogym_commit": repogym_commit,
-        "docker_images": {
-            image: image_ids[image] for image in sorted({t.docker_image for t in ordered})
-        },
-        "splits": {
-            "method": "by PR merge time: newest 20% test, next 10% dev, rest train",
-            "dev_start": split.dev_start,
-            "test_start": split.test_start,
-            "counts": {name: sum(c.values()) for name, c in sorted(per_split.items())},
-            "per_repo": {name: dict(sorted(c.items())) for name, c in sorted(per_split.items())},
-        },
-        "merged_at_range": [ordered[0].merged_at, ordered[-1].merged_at] if ordered else None,
-    }
+    manifest = build_manifest(
+        version, ordered, split, image_ids, repogym_commit, sha256_file(tasks_path), extra
+    )
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
