@@ -6,6 +6,7 @@ and ``data/runs/<run_id>/trajectories/<task_id>.json`` (ATIF, validated before i
 
 from __future__ import annotations
 
+import functools
 import json
 import subprocess
 import threading
@@ -23,7 +24,7 @@ from repogym.env.docker import image_id
 from repogym.env.environment import Environment, Observation, instructions, issue_text, now
 from repogym.env.history import distinctive_lines
 from repogym.env.sandbox import EnvSetupError
-from repogym.flags import compute
+from repogym.flags import compute, future_gold_lines
 from repogym.grade import Grade, grade
 from repogym.release import ReleaseTask
 
@@ -72,11 +73,16 @@ class EpisodeRecord(BaseModel):
     # Past-history overlap of the fix (D6): recorded, never failed on; results break down by it.
     history_overlap: dict | None = None
     history_recoverable: bool | None = None
+    past_gold_lines_observed: list[str] = Field(default_factory=list)  # informational (D6)
     disk_written_mb: float | None = None  # writable layer at the end (setup included)
     peak_disk_mb: float | None = None
 
 
+@functools.cache
 def repogym_commit() -> tuple[str, bool]:
+    """The code a run executes: HEAD and dirtiness, captured once when the process starts
+    (the first call), so a later edit or commit can't be misattributed to running episodes."""
+
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=ROOT, text=True, capture_output=True).stdout
 
@@ -165,7 +171,14 @@ def run_episode(
         record.status = "agent_error"
     record.reward = result.reward if result.status == "graded" else None
     gold = distinctive_lines(env.spec.bare_path, task.base_commit, task.gold_patch)
-    flags = compute(env.steps, work, result, record.done_reason, gold, is_oracle=is_oracle)
+    past = set(env.probe_info.get("past_gold_lines", []))
+    # The leak detector looks for FUTURE information only: gold lines that appear nowhere in
+    # the reachable history. Past-history lines are context (D6) and are counted separately.
+    future_gold = future_gold_lines(gold, past)
+    flags = compute(env.steps, work, result, record.done_reason, future_gold, is_oracle=is_oracle)
+    record.past_gold_lines_observed = sorted(
+        {line for line in past for step in env.steps if line in step.observation}
+    )
     record.flags = {k: [e.model_dump() for e in v] for k, v in flags}
     record.flags_raised = flags.raised()
     record.tokens, record.cost_usd = _totals(env)
@@ -262,6 +275,7 @@ def run_many(
             if line
         }
     pending = [t for t in tasks if t.task_id not in done_ids]
+    repogym_commit()  # pin provenance to the code this process started with
 
     def one(task: ReleaseTask) -> EpisodeRecord:
         record = run_episode(task, make_agent(task), run_dir, budgets, is_oracle=is_oracle)

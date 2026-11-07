@@ -65,6 +65,12 @@ class Flags(BaseModel):
         return [name for name, value in self if value]
 
 
+def future_gold_lines(distinctive: list[str], past_history_lines: set[str]) -> list[str]:
+    """The gold lines that would reveal FUTURE information: distinctive lines of the fix that
+    appear nowhere in the reachable (past) history. Past-history lines are context (D6)."""
+    return [line for line in distinctive if line not in past_history_lines]
+
+
 def _commands(step: StepRecord) -> str:
     if step.tool == "bash":
         return step.arguments.get("command", "")

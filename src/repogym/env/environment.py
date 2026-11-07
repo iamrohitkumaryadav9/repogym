@@ -131,6 +131,9 @@ def gold_probe(task: ReleaseTask, sink: dict | None = None):
         overlap = result.overlap()
         if sink is not None:
             sink["history_overlap"] = dataclasses.asdict(overlap)
+            # Distinctive gold lines that already exist in past history: legitimate context,
+            # so the leak detector (flags.gold_content_in_observations) doesn't count them.
+            sink["past_gold_lines"] = sorted(result.line_hits)
         if result.clean:
             detail = (
                 f"no patch-id match in {result.commits} commits; past-history overlap "

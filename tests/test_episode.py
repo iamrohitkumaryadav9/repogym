@@ -318,3 +318,16 @@ def test_disk_budget_ends_the_episode_and_commands_get_a_file_size_limit():
     assert script.startswith("ulimit -f 10240\n") and script.endswith("make big")
     obs, done, info = env.step(Action(tool="bash", arguments={"command": "make bigger"}))
     assert done and info["done_reason"] == "budget:disk" and env.state().peak_disk_mb == 150.0
+
+
+def test_leak_detector_counts_future_lines_and_ignores_past_history():
+    from repogym.flags import future_gold_lines
+
+    gold = ["restored from an old commit, legitimately visible", "brand new line only in the fix"]
+    future = future_gold_lines(gold, past_history_lines={gold[0]})
+    assert future == ["brand new line only in the fix"]
+    seen_past = [step(1, "git log -p", observation=f"+    {gold[0]}")]
+    assert not compute(seen_past, None, None, None, future).gold_content_in_observations
+    seen_future = [step(1, "git log --all -p", observation=f"+    {gold[1]}")]
+    flagged = compute(seen_future, None, None, None, future).gold_content_in_observations
+    assert flagged and flagged[0].step == 1
