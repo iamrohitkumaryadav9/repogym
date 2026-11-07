@@ -63,6 +63,29 @@ def test_timeline_rejects_weak_references():
     assert issues_from_timeline(events, REPO, merged) == []
 
 
+def _link(event, number, state="closed", repo=REPO):
+    return {
+        "event": event,
+        "subject": {"number": number, "state": state, "repository": {"full_name": repo}},
+    }
+
+
+def test_connected_events_link_closed_issues_in_this_repo():
+    events = [_link("connected", 7), _link("connected", 8, state="open")]
+    events.append(_link("connected", 9, repo="other/project"))
+    assert issues_from_timeline(events, REPO, "2024-01-01T12:00:00Z") == [7]
+
+
+def test_disconnected_cancels_an_earlier_connected():
+    events = [_link("connected", 7), _link("disconnected", 7)]
+    assert issues_from_timeline(events, REPO, "2024-01-01T12:00:00Z") == []
+
+
+def test_reconnected_issue_counts():
+    events = [_link("connected", 7), _link("disconnected", 7), _link("connected", 7)]
+    assert issues_from_timeline(events, REPO, "2024-01-01T12:00:00Z") == [7]
+
+
 GOOD = PrFacts(True, True, True, True, True)
 
 

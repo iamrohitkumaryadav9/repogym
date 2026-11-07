@@ -18,8 +18,7 @@ _CLOSING_REF = re.compile(
     re.IGNORECASE,
 )
 
-# A manual "development" link has no explicit payload on the REST timeline, so a mention only
-# counts when the issue closed around the time the PR merged.
+# A bare mention is weak evidence, so it only counts when the issue closed around the merge.
 CROSS_REFERENCE_CLOSE_WINDOW = timedelta(days=1)
 
 
@@ -48,8 +47,25 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def issues_from_timeline(events: list[dict[str, Any]], repo: str, merged_at: str) -> list[int]:
-    """Return issues cross-referencing this PR that closed around its merge."""
+def _connected_issues(events: list[dict[str, Any]], repo: str) -> list[int]:
+    """Issues manually linked in the PR's Development sidebar and still linked and closed."""
+    linked: dict[int, None] = {}
+    for event in events:
+        subject = event.get("subject") or {}
+        number = subject.get("number")
+        if number is None:
+            continue
+        if event.get("event") == "disconnected":
+            linked.pop(number, None)
+        elif event.get("event") == "connected":
+            source_repo = (subject.get("repository") or {}).get("full_name", "")
+            if source_repo.lower() == repo.lower() and subject.get("state") == "closed":
+                linked[number] = None
+    return list(linked)
+
+
+def _cross_referenced_issues(events: list[dict[str, Any]], repo: str, merged_at: str) -> list[int]:
+    """Issues mentioning this PR that closed around its merge."""
     merged = _parse_time(merged_at)
     numbers: list[int] = []
     for event in events:
@@ -67,3 +83,10 @@ def issues_from_timeline(events: list[dict[str, Any]], repo: str, merged_at: str
             if issue["number"] not in numbers:
                 numbers.append(issue["number"])
     return numbers
+
+
+def issues_from_timeline(events: list[dict[str, Any]], repo: str, merged_at: str) -> list[int]:
+    """Return linked issues from a PR timeline, strongest evidence first, deduplicated."""
+    connected = _connected_issues(events, repo)
+    referenced = _cross_referenced_issues(events, repo, merged_at)
+    return list(dict.fromkeys(connected + referenced))
