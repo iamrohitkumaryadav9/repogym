@@ -249,5 +249,92 @@ def clean(
         typer.echo(f"repogym-builder cache: {prune_build_cache()}")
 
 
+@app.command()
+def classify(
+    task: Annotated[list[str] | None, typer.Option(help="Only these tasks; repeatable.")] = None,
+    interval: Annotated[float, typer.Option(help="Seconds between API requests.")] = 5.0,
+) -> None:
+    """Label verified tasks with the LLM classifier. Writes data/task_type_labels.jsonl only."""
+    from collections import Counter
+
+    from repogym.classify import classify as classify_task
+    from repogym.config import TASK_TYPE_LABELS_PATH
+    from repogym.llm import GeminiClient, MissingSettings, Settings
+    from repogym.models import Candidate, VerifiedTask
+    from repogym.validate import read_jsonl
+
+    try:
+        settings = Settings.from_env()
+    except MissingSettings as exc:
+        typer.echo(f"{exc}. Add them to .env and rerun.")
+        raise typer.Exit(1) from exc
+    candidates = {c.task_id: c for c in read_jsonl(CANDIDATES_PATH, Candidate)}
+    ids = task or [t.task_id for t in read_jsonl(VERIFIED_PATH, VerifiedTask)]
+    client = GeminiClient(settings, interval=interval)
+    labels = []
+    try:
+        for index, task_id in enumerate(ids, start=1):
+            labels.append(classify_task(candidates[task_id], client))
+            if index % 25 == 0:
+                typer.echo(f"{index}/{len(ids)} labelled, {client.requests} API requests")
+    finally:
+        client.close()
+    temp = TASK_TYPE_LABELS_PATH.with_suffix(".tmp")
+    temp.write_text("".join(label.model_dump_json() + "\n" for label in labels), encoding="utf-8")
+    temp.replace(TASK_TYPE_LABELS_PATH)
+    for (model, task_type), count in sorted(Counter((x.model, x.task_type) for x in labels).items(),
+                                            key=str):  # fmt: skip
+        typer.echo(f"{count:5d}  {task_type:8} via {model}")
+    typer.echo(f"{client.requests} API requests; labels in {TASK_TYPE_LABELS_PATH}")
+
+
+@app.command()
+def sheets() -> None:
+    """Write the blind task-type (30) and spec-clarity (25) labelling sheets."""
+    from repogym.config import LABELLING_DIR, SPEC_SHEET, TASK_TYPE_SHEET
+    from repogym.models import Candidate, VerifiedTask
+    from repogym.sheets import (
+        select_spec_sample,
+        select_task_type_sample,
+        write_spec_sheet,
+        write_task_type_sheet,
+    )
+    from repogym.validate import read_jsonl
+
+    LABELLING_DIR.mkdir(parents=True, exist_ok=True)
+    for path in (TASK_TYPE_SHEET, SPEC_SHEET):
+        if path.exists():
+            typer.echo(f"{path} exists; not overwriting a sheet that may hold your labels")
+            raise typer.Exit(1)
+    candidates = {c.task_id: c for c in read_jsonl(CANDIDATES_PATH, Candidate)}
+    tasks = read_jsonl(VERIFIED_PATH, VerifiedTask)
+    type_sample = select_task_type_sample(tasks, candidates)
+    write_task_type_sheet(TASK_TYPE_SHEET, type_sample, candidates, seed=11)
+    spec_sample = select_spec_sample(tasks)
+    write_spec_sheet(SPEC_SHEET, spec_sample, {t.task_id: t for t in tasks}, candidates, seed=12)
+    typer.echo(f"{TASK_TYPE_SHEET}: {len(type_sample)} tasks")
+    typer.echo(f"{SPEC_SHEET}: {len(spec_sample)} tasks")
+
+
+@app.command()
+def calibrate() -> None:
+    """Score the classifier and the spec check against the filled-in labelling sheets."""
+    from repogym.calibrate_report import report
+
+    for line in report():
+        typer.echo(line)
+
+
+@app.command()
+def release(
+    version: Annotated[str, typer.Argument(help="Release name, e.g. v0.1")],
+) -> None:
+    """Freeze verified tasks into data/release/<version>/ with time-based splits."""
+    from repogym.release_build import build_release
+
+    manifest = build_release(version)
+    typer.echo(json.dumps(manifest, indent=2))
+
+
 if __name__ == "__main__":
     app()

@@ -16,6 +16,11 @@ REJECTIONS_PATH = DATA_DIR / "rejections.jsonl"
 BASELINE_PATH = DATA_DIR / "baseline_failures.jsonl"
 RUN_METRICS_PATH = DATA_DIR / "run_metrics.jsonl"
 PROVENANCE_PATH = DATA_DIR / "provenance.jsonl"
+TASK_TYPE_LABELS_PATH = DATA_DIR / "task_type_labels.jsonl"
+LABELLING_DIR = DATA_DIR / "labelling"
+TASK_TYPE_SHEET = LABELLING_DIR / "task_type_sheet.csv"
+SPEC_SHEET = LABELLING_DIR / "spec_sheet.csv"
+RELEASE_DIR = DATA_DIR / "release"
 BUILD_LOG_PATH = DATA_DIR / "image_builds.jsonl"
 
 MINING_WINDOW_DAYS = 3 * 365
