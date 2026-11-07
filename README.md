@@ -23,16 +23,21 @@ whether a patch fixes it. Every task is validated in Docker by three checks befo
 | **Spec check vs human labels, blind** | precision 0.67 · recall 0.75 · **F1 0.71** (n = 25) |
 | **Spec check, adjudicated** | precision 0.67 · recall 0.75 · **F1 0.71**. 3 false positives adjudicated; human labels upheld in all 3 |
 | **spec_clear in the release** | 239 clear, 8 unclear. Source: 25 human, 222 heuristic |
-| **Splits (by merge date)** | train 172 (before 2026-07-10) · dev 25 (2026-07-10 to 2026-08-17) · test 50 (on or after 2026-08-18) |
+| **Splits (primary, per repo by merge date)** | train 174 · dev 25 · test 48. Every repo is in every split, with 18.6–20.0% of each repo in test |
+| **Global cutoffs (contamination view)** | `split_global`: train 172 (before 2026-07-10) · dev 25 · test 50 (on or after 2026-08-18) |
 | **Docker disk (RepoGym only)** | 2.73 GB for 5 base images plus build cache (budget 10 GB) |
 
-Per-repo counts per split:
+Primary split (`split`), per-repo counts and each repo's cutoff dates. A task is in dev if it
+was merged on or after the repo's dev cutoff, and in test on or after its test cutoff (UTC dates):
 
-| Split | click | astroid | tomlkit | isort | attrs | Total |
-|---|---|---|---|---|---|---|
-| train | 60 | 45 | 31 | 16 | 20 | 172 |
-| dev | 6 | 8 | 6 | 4 | 1 | 25 |
-| test | 5 | 14 | 8 | 23 | 0 | 50 |
+| Repo | train | dev | test | dev cutoff | test cutoff |
+|---|---|---|---|---|---|
+| pallets/click | 49 | 8 | 14 | 2026-05-23 | 2026-07-01 |
+| pylint-dev/astroid | 47 | 7 | 13 | 2026-08-01 | 2026-08-26 |
+| python-poetry/tomlkit | 32 | 4 | 9 | 2026-07-14 | 2026-07-16 |
+| PyCQA/isort | 31 | 4 | 8 | 2026-09-27 | 2026-10-21 |
+| python-attrs/attrs | 15 | 2 | 4 | 2025-07-28 | 2025-08-04 |
+| **Total** | **174** | **25** | **48** | | |
 
 Validation and labelling details: [validity checks](#the-three-validity-checks),
 [task type and spec clarity](#task-type-and-specification-clarity),
@@ -80,6 +85,14 @@ uv run repogym calibrate                  # make calibrate: vs data/labelling/ h
 uv run repogym release v0.1 --dry-run     # make release-dry: build + validate in a temp dir
 ```
 
+`make FAST=1 reproduce` is a ~30-second smoke test of every stage. It never touches `data/`,
+never calls Gemini and never rebuilds images:
+
+* `mine` uses one repo from the API cache and writes to `build/fast/`.
+* `build` only checks the images and base commits.
+* `validate` runs one task in Docker into a scratch directory.
+* `label` summarises the saved classifier runs.
+
 Every stage is cached or resumable. Mining caches every API response. Validation and labelling
 fsync each result as it finishes, and a rerun skips completed work. The human labels used for
 calibration are committed in `data/labelling/`. Their definitions are in
@@ -87,16 +100,24 @@ calibration are committed in `data/labelling/`. Their definitions are in
 
 ## Design decisions & limitations
 
-**Time-based splits and contamination.** Every task is a public PR, so a model trained on data
-collected after a task's merge date may have seen the issue, the discussion and the fix. That would
-inflate its score without measuring the skill the task is meant to test. Splits are therefore by
-merge date, not random. Tasks are grouped by UTC merge date, and a date is never split. The newest
-~20% are `test`, the next ~10% `dev`, the rest `train`. A model tuned on `train`/`dev` is always
-evaluated on fixes merged later. The `test` split is the most contamination-resistant part, but it
-is not contamination-free. Each task records `merged_at`. When we evaluate agents, we will also
-report results separately on tasks merged after each model's published training cutoff, where one
-is known. The split is uneven across repos: isort is very active in late 2026 (23 of the 50 test
-tasks), and attrs has no test tasks.
+**Time-based splits, per repo, plus global cutoffs for contamination.** Every task is a public
+PR, so a model trained on data collected after a task's merge date may have seen the issue, the
+discussion and the fix. That would inflate its score without measuring the skill the task is meant
+to test. Splits are therefore by merge date, never random, and a UTC date is never split. Each task
+carries two views:
+
+* **`split` (primary, for balanced evaluation)**: within each repo, its newest ~20% of tasks are
+  test, the next ~10% dev, and the rest train. Each repo has its own cutoff dates, recorded in the
+  manifest. Every repo appears in every split, and no repo dominates test. A single global cutoff
+  would put 23 of 50 test tasks in isort, the most active repo recently, and none in attrs.
+* **`split_global` (secondary, for contamination analysis)**: one set of cutoff dates for all
+  repos (test on or after 2026-08-18, dev on or after 2026-07-10). Per-repo test cutoffs range
+  from 2025-08-04 (attrs) to 2026-10-21 (isort), so the primary test split is *not* uniformly
+  recent. When a claim depends on recency, use `split_global` or the merge dates directly.
+
+Each task records `merged_at`. When we evaluate agents, we will also report results separately on
+tasks merged after each model's published training cutoff, where one is known. Those are the
+results least exposed to this kind of leakage.
 
 **One classifier model, chosen because of rate limits.** The first calibration run used
 `gemini-3.8-flash` as the primary. It hit 309 HTTP 429 responses on 85 tasks, consistent with
@@ -383,12 +404,18 @@ recall against the human labels.
 
 `repogym release v0.1` freezes the verified tasks into `data/release/v0.1/`:
 
-* `tasks.jsonl`: each task with its `split`, PR `merged_at` and `created_at`, PR and issue URLs,
+* `tasks.jsonl`: each task with its `split` (per repo) and `split_global`, PR `merged_at` and
+  `created_at`, PR and issue URLs,
   `task_type` and `task_type_source`, and `spec_clear` and `spec_clear_source`. It also keeps the
   heuristic's own verdict (`spec_check_clear`, `spec_issues`).
 * `manifest.json`: task count, per-repo counts, the SHA-256 of `tasks.jsonl`, the image digests,
-  the repogym commit, the creation date, the split cutoff dates with per-repo counts per split,
-  label-source counts, and the classifier model, prompt version and consensus rule.
+  the release commit, the creation date, both split views (each repo's cutoff dates, and the
+  global cutoffs) with per-repo counts per split, label-source counts, and the classifier model,
+  prompt version and consensus rule. A `commits` record also gives the commit that validated the
+  data (`0bb55ab`) and the commit that built the release. It lists the code changed in between
+  and confirms that the validation code itself is unchanged. It also gives the commit that last
+  wrote the validated data files, with their SHA-256, and confirms they are byte-identical to it.
+  This makes it explicit that code changed after validation but the validated data did not.
 
 A release refuses to overwrite an existing directory, and refuses to run while code or label
 inputs have uncommitted changes. After writing, it re-reads the release and checks it against the
