@@ -110,6 +110,26 @@ def report() -> list[str]:
             f"TP={pr.true_positive} FP={pr.false_positive} "
             f"FN={pr.false_negative} TN={pr.true_negative}"
         )
+        adjudication_path = SPEC_SHEET.with_name("spec_adjudication.csv")
+        if adjudication_path.exists():
+            with adjudication_path.open(newline="", encoding="utf-8-sig") as handle:
+                adjudicated = {r["task_id"]: r for r in csv.DictReader(handle)}
+            final = {t: adjudicated.get(t, {}).get("adjudicated_spec_clear", v)
+                     for t, v in spec_human.items()}  # fmt: skip
+            upheld = sum(r["adjudicated_spec_clear"] == r["blind_spec_clear"]
+                         for r in adjudicated.values())  # fmt: skip
+            apr = precision_recall(
+                [final[t] == "no" for t in ids], [not key[t]["spec_clear"] for t in ids]
+            )
+            lines.append(
+                f"Spec check vs you, adjudicated: precision={_fmt(apr.precision)} "
+                f"recall={_fmt(apr.recall)} f1={_fmt(apr.f1)} TP={apr.true_positive} "
+                f"FP={apr.false_positive} FN={apr.false_negative} TN={apr.true_negative}"
+            )
+            lines.append(
+                f"  {len(adjudicated)} false positives were adjudicated; the human labels were "
+                f"upheld in {'all ' if upheld == len(adjudicated) else ''}{upheld} cases."
+            )
         for t in ids:
             flagged, unclear = not key[t]["spec_clear"], spec_human[t] == "no"
             if flagged == unclear:

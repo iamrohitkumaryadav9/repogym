@@ -1,0 +1,4 @@
+task_id,blind_spec_clear,check_flag,adjudicated_spec_clear,adjudication_reason
+PyCQA__isort-2626,yes,flagged: import `STRING_PREFIXES` (tests/unit/test_regressions.py:9),yes,"The issue clearly describes the raw-prefixed module docstring problem, and the tests check behaviour consistent with that requirement."
+python-attrs__attrs-1255,yes,flagged: import `PY_3_13_PLUS` (tests/test_cmp.py:10),yes,"The issue explains Python 3.13's docstring indentation changes, making the expected test behaviour inferable."
+python-attrs__attrs-1457,yes,flagged: keyword `force_kw_only` (tests/test_make.py:1063),yes,"The issue specifies attribute-level `kw_only` overrides, including inheritance and default behaviour, sufficiently for an engineer to implement the fix."

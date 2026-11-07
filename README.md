@@ -217,6 +217,28 @@ searching the repo and its history for hints about the tests. That is reward hac
 solving. Marking these tasks lets training down-weight or exclude them, and lets evaluation report
 scores with and without them.
 
+**Calibration and known limitations.** Against 25 blind human labels (all 9 flagged tasks plus 16
+others), the check has precision 0.67, recall 0.75 and F1 0.71 for "underspecified". It produced 3
+false positives, all adjudicated; the human labels were upheld in all 3 cases. The adjudication
+reasons are in `data/labelling/spec_adjudication.csv`. Adjudicated precision, recall and F1 are the
+same as the blind ones. The check has two known limitations:
+
+1. **It is stricter than human judgement on some new names the tests use.** It flagged
+   `PyCQA__isort-2626` (the tests import a new constant, `STRING_PREFIXES`),
+   `python-attrs__attrs-1255` (a new compatibility flag, `PY_3_13_PLUS`) and
+   `python-attrs__attrs-1457` (a new keyword, `force_kw_only`). A human judged that each issue
+   describes the required behaviour well enough.
+2. **It only detects new *names*, not behavioural underspecification.** It missed
+   `pallets__click-3695` (the tests expect deprecation warnings the issue doesn't ask for) and
+   `python-attrs__attrs-1221` (the tests also require `super()` access through `cached_property`).
+
+The check has not been changed. In a release, `spec_clear` is the human label where there is one
+(`spec_clear_source = "human"`, 25 tasks), and the check's result otherwise
+(`spec_clear_source = "heuristic"`). Planned future work:
+
+* Tell test-helper and internal imports (such as `attr._compat` flags) apart from public-API names.
+* Add an LLM-assisted spec judge to catch behavioural underspecification.
+
 FAIL_TO_PASS size matters too, but is only reported, not filtered. With a single test the reward
 is effectively binary and easier to satisfy with a narrow special case. Tasks with several
 FAIL_TO_PASS tests give a denser, harder-to-game signal. `repogym stats` reports how many tasks
