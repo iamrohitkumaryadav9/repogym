@@ -14,6 +14,7 @@ class Candidate(BaseModel):
     task_id: str
     repo: str
     pr_number: int
+    pr_title: str = ""
     issue_number: int
     issue_title: str
     issue_body: str
@@ -24,6 +25,7 @@ class Candidate(BaseModel):
     gold_patch: str
     test_patch: str
     created_at: str
+    merged_at: str = ""
     changed_lines: int
     source_files: list[str]
     test_files: list[str]
