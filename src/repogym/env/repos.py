@@ -34,6 +34,13 @@ def ensure_clones(spec: RepoSpec) -> None:
         _ensure_bare(url, REPOS_DIR / f"{mirror}.git")
 
 
+def has_commit(spec: RepoSpec, sha: str) -> bool:
+    """Is the commit in the local bare clone? Never touches the network."""
+    if not spec.bare_path.exists():
+        return False
+    return _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=spec.bare_path).returncode == 0
+
+
 def ensure_commit(spec: RepoSpec, sha: str) -> bool:
     """Make sure a commit is present, fetching it directly if no branch still reaches it."""
     if _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=spec.bare_path).returncode == 0:

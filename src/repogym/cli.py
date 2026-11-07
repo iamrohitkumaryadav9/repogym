@@ -41,6 +41,10 @@ def main(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> N
 def mine(
     repo: Annotated[list[str] | None, typer.Option(help="Repo slug; repeatable.")] = None,
     refresh: Annotated[bool, typer.Option(help="Ignore the API response cache.")] = False,
+    out: Annotated[
+        Path | None,
+        typer.Option(help="Write candidates here instead of data/ (report goes next to it)."),
+    ] = None,
 ) -> None:
     """Fetch merged PRs and write data/tasks_candidates.jsonl."""
     from repogym.mining.github import GitHubClient, load_token
@@ -56,14 +60,21 @@ def mine(
             report_lines.append(report_to_json(report))
     finally:
         client.close()
-    write_jsonl_atomic(CANDIDATES_PATH, candidate_lines)
-    write_jsonl_atomic(MINING_REPORT_PATH, report_lines)
-    typer.echo(f"Wrote {len(candidate_lines)} candidates to {CANDIDATES_PATH}")
+    candidates_path = out or CANDIDATES_PATH
+    report_path = out.with_name("mining_report.jsonl") if out else MINING_REPORT_PATH
+    candidates_path.parent.mkdir(parents=True, exist_ok=True)
+    write_jsonl_atomic(candidates_path, candidate_lines)
+    write_jsonl_atomic(report_path, report_lines)
+    typer.echo(f"Wrote {len(candidate_lines)} candidates to {candidates_path}")
+    typer.echo(f"{client.network_requests} GitHub API requests, {client.cache_hits} from the cache")
 
 
 @app.command()
 def build(
     repo: Annotated[list[str] | None, typer.Option(help="Repo slug; repeatable.")] = None,
+    check: Annotated[
+        bool, typer.Option(help="Only check images, clones and base commits; build nothing.")
+    ] = False,
 ) -> None:
     """Clone the repos, fetch every candidate's base commit and build one image per repo."""
     from datetime import UTC, datetime
@@ -74,8 +85,27 @@ def build(
     from repogym.validate import read_jsonl
 
     check_docker()
-    ensure_builder()
     candidates = read_jsonl(CANDIDATES_PATH, Candidate)
+    if check:
+        from repogym.env.docker import image_id
+        from repogym.env.repos import has_commit
+
+        problems = 0
+        for slug in _select_repos(repo):
+            spec = get_repo(slug)
+            commits = {c.base_commit for c in candidates if c.repo == spec.full_name}
+            absent = [sha for sha in commits if not has_commit(spec, sha)]
+            digest = image_id(spec.image)
+            problems += (not digest) + len(absent)
+            present = len(commits) - len(absent)
+            typer.echo(
+                f"{spec.image}: {digest[:19] or 'MISSING'}; "
+                f"{present}/{len(commits)} base commits present"
+            )
+        if problems:
+            raise typer.Exit(1)
+        return
+    ensure_builder()
     BUILD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     for slug in _select_repos(repo):
         spec = get_repo(slug)
@@ -115,21 +145,34 @@ def validate(
     all_tasks: Annotated[
         bool, typer.Option("--all", help="Re-validate every candidate from scratch.")
     ] = False,
+    scratch: Annotated[
+        Path | None,
+        typer.Option(help="Write every result to this directory instead of data/ (a dry run)."),
+    ] = None,
 ) -> None:
     """Apply the validity checks. Safe to interrupt: reruns skip finished tasks."""
     from collections import Counter
 
+    import repogym.validate as v
     from repogym.env.docker import check_docker
     from repogym.models import Candidate
     from repogym.validate import forget_rejections, forget_tasks, read_jsonl, validate_all
 
+    rejections_path = REJECTIONS_PATH
+    if scratch is not None:
+        scratch.mkdir(parents=True, exist_ok=True)
+        for name in ("VERIFIED_PATH", "REJECTIONS_PATH", "BASELINE_PATH", "RUN_METRICS_PATH",
+                     "PROVENANCE_PATH"):  # fmt: skip
+            setattr(v, name, scratch / getattr(v, name).name)
+        rejections_path = v.REJECTIONS_PATH
+        typer.echo(f"Scratch run: results go to {scratch}, data/ is not touched")
     check_docker()
     if all_tasks:
         task = [c.task_id for c in read_jsonl(CANDIDATES_PATH, Candidate)]
     if task:
         typer.echo(f"Discarded {forget_tasks(set(task))} records for {len(task)} tasks")
     if retry:
-        typer.echo(f"Forgot {forget_rejections(REJECTIONS_PATH, set(retry))} rejections")
+        typer.echo(f"Forgot {forget_rejections(rejections_path, set(retry))} rejections")
     selected = {get_repo(slug).full_name for slug in _select_repos(repo)}
     candidates = [c for c in read_jsonl(CANDIDATES_PATH, Candidate) if c.repo in selected]
     if task:
@@ -315,6 +358,9 @@ def classify(
 def classify_consensus(
     interval: Annotated[float, typer.Option(help="Seconds between API requests.")] = 6.0,
     limit: Annotated[int | None, typer.Option(help="Only the first N unknown tasks.")] = None,
+    report_only: Annotated[
+        bool, typer.Option(help="Summarise the saved runs; make no API requests.")
+    ] = False,
 ) -> None:
     """Three runs per task with no GitHub type label; resumable. Writes the runs file only."""
     from repogym.classify import TaskTypeLabel
@@ -328,6 +374,10 @@ def classify_consensus(
                      if t.task_type == "unknown")  # fmt: skip
     ids = unknown[:limit] if limit else unknown
     done = latest_runs(read_jsonl(TASK_TYPE_RUNS_PATH, TaskTypeLabel))
+    if report_only:
+        for line in summarize([decide(t, list(done.get(t, {}).values())) for t in ids]):
+            typer.echo(line)
+        return
     store = JsonlStore(TASK_TYPE_RUNS_PATH)
     client = _llm_client(interval)
     try:
