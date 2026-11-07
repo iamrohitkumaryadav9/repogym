@@ -44,9 +44,13 @@ class ScriptedModel:
 
 
 def test_baseline_loop_runs_one_command_per_turn_and_submits():
-    model = ScriptedModel(["THOUGHT: look\n```bash\nls\n```",
-                           "oops, forgot the block",
-                           f"THOUGHT: done\n```bash\n{SENTINEL}\n```"])
+    model = ScriptedModel(
+        [
+            "THOUGHT: look\n```bash\nls\n```",
+            "oops, forgot the block",
+            f"THOUGHT: done\n```bash\n{SENTINEL}\n```",
+        ]
+    )
     env = env_with(Budgets())
     BaselineAgent(model).run(env, Observation(text="the issue"))
     assert [s.tool for s in env.steps] == ["bash", None, "submit"]
@@ -58,8 +62,9 @@ def test_baseline_loop_runs_one_command_per_turn_and_submits():
 
 
 def test_blocked_or_cut_off_replies_are_never_executed():
-    model = ScriptedModel([ModelResponseError("finishReason MAX_TOKENS"),
-                           f"```bash\n{SENTINEL}\n```"])
+    model = ScriptedModel(
+        [ModelResponseError("finishReason MAX_TOKENS"), f"```bash\n{SENTINEL}\n```"]
+    )
     env = env_with(Budgets())
     BaselineAgent(model).run(env, Observation(text="issue"))
     assert env.steps[0].tool is None and "could not be used" in env.steps[0].observation
@@ -82,8 +87,10 @@ def test_model_outage_propagates_as_an_agent_error():
 
 
 def gemini(text, status=200, finish="STOP", usage=None):
-    body = {"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": finish}],
-            "usageMetadata": usage or {"promptTokenCount": 50, "candidatesTokenCount": 7}}
+    body = {
+        "candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": finish}],
+        "usageMetadata": usage or {"promptTokenCount": 50, "candidatesTokenCount": 7},
+    }
     return httpx.Response(status, json=body if status == 200 else {})
 
 
@@ -94,9 +101,13 @@ def chat_client(script, sleeps=None):
         calls.append((model, payload))
         return script[model].pop(0)
 
-    client = GeminiClient(SETTINGS, interval=0, transport=lambda *a: None,
-                          sleep=(sleeps if sleeps is not None else []).append,
-                          rng=random.Random(0))
+    client = GeminiClient(
+        SETTINGS,
+        interval=0,
+        transport=lambda *a: None,
+        sleep=(sleeps if sleeps is not None else []).append,
+        rng=random.Random(0),
+    )
     client._chat_transport = transport
     return client, calls
 
@@ -105,7 +116,11 @@ def test_gemini_chat_maps_roles_reports_usage_and_retries():
     client, calls = chat_client({"primary-m": [gemini("", 429), gemini("hi")]})
     reply = GeminiChat(client).chat("sys", [("user", "a"), ("assistant", "b"), ("user", "c")])
     assert (reply.text, reply.model, reply.prompt_tokens, reply.completion_tokens) == (
-        "hi", "primary-m", 50, 7)
+        "hi",
+        "primary-m",
+        50,
+        7,
+    )
     payload = calls[-1][1]
     assert [c["role"] for c in payload["contents"]] == ["user", "model", "user"]
     assert payload["systemInstruction"]["parts"][0]["text"] == "sys"
@@ -116,8 +131,9 @@ def test_gemini_chat_maps_roles_reports_usage_and_retries():
 def test_gemini_chat_falls_back_then_gives_up():
     client, calls = chat_client({"primary-m": [gemini("", 503)] * 5, "fallback-m": [gemini("ok")]})
     assert GeminiChat(client).chat("s", [("user", "u")]).model == "fallback-m"
-    client, _ = chat_client({"primary-m": [gemini("", 503)] * 5,
-                             "fallback-m": [gemini("", 429)] * 5})
+    client, _ = chat_client(
+        {"primary-m": [gemini("", 503)] * 5, "fallback-m": [gemini("", 429)] * 5}
+    )
     with pytest.raises(ModelUnavailable):
         GeminiChat(client).chat("s", [("user", "u")])
 
@@ -139,9 +155,14 @@ def test_reply_cost_only_from_a_configured_price():
 
 
 def openai(text="ok", finish="stop", status=200):
-    body = {"choices": [{"message": {"content": text}, "finish_reason": finish}],
-            "usage": {"prompt_tokens": 9, "completion_tokens": 3,
-                      "prompt_tokens_details": {"cached_tokens": 4}}}
+    body = {
+        "choices": [{"message": {"content": text}, "finish_reason": finish}],
+        "usage": {
+            "prompt_tokens": 9,
+            "completion_tokens": 3,
+            "prompt_tokens_details": {"cached_tokens": 4},
+        },
+    }
     return httpx.Response(status, json=body if status == 200 else {})
 
 
@@ -152,8 +173,13 @@ def compat(responses, sleeps=None):
         sent.append(body)
         return responses.pop(0)
 
-    return OpenAICompatChat("https://example.invalid/v1", "m", "k-not-real", transport=transport,
-                            sleep=(sleeps if sleeps is not None else []).append), sent
+    return OpenAICompatChat(
+        "https://example.invalid/v1",
+        "m",
+        "k-not-real",
+        transport=transport,
+        sleep=(sleeps if sleeps is not None else []).append,
+    ), sent
 
 
 def test_openai_compat_sends_system_and_turns_and_parses_usage():

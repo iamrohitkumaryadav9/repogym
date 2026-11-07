@@ -12,15 +12,27 @@ def write_run(root, run_id, records):
     with (run / "episodes.jsonl").open("w") as handle:
         for record in records:
             handle.write(json.dumps(record) + "\n")
-            (run / "trajectories" / f"{record['task_id']}.json").write_text(json.dumps(
-                {"schema_version": "ATIF-v1.8", "steps": [{"step_id": 1}]}))
+            (run / "trajectories" / f"{record['task_id']}.json").write_text(
+                json.dumps({"schema_version": "ATIF-v1.8", "steps": [{"step_id": 1}]})
+            )
             (run / "diffs" / f"{record['task_id']}.diff").write_text("+fix\n")
 
 
 def rec(task_id, reward, status="graded"):
-    return {"task_id": task_id, "agent": "repogym-oracle", "agent_version": "1", "reward": reward,
-            "status": status, "steps": 2, "flags_raised": [], "flags": {}, "done_reason": "submitted",
-            "error": "", "trajectory": f"trajectories/{task_id}.json", "grade": {}}
+    return {
+        "task_id": task_id,
+        "agent": "repogym-oracle",
+        "agent_version": "1",
+        "reward": reward,
+        "status": status,
+        "steps": 2,
+        "flags_raised": [],
+        "flags": {},
+        "done_reason": "submitted",
+        "error": "",
+        "trajectory": f"trajectories/{task_id}.json",
+        "grade": {},
+    }
 
 
 def test_runs_episodes_and_replay_payload(tmp_path):

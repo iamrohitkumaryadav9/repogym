@@ -4,7 +4,7 @@ import io
 import subprocess
 import tarfile
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 
@@ -48,13 +48,34 @@ def rebuilt_tree(env, diff: str) -> dict[str, tuple]:
     spec = get_repo(env.task.repo)
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / "r"
-        subprocess.run(["git", *_SAFE, "clone", "-q", "--no-checkout", "--shared",
-                        str(spec.bare_path), str(repo)], env=_ENV, check=True)
-        subprocess.run(["git", *_SAFE, "checkout", "-q", "--detach", env.task.base_commit],
-                       cwd=repo, env=_ENV, check=True)
+        subprocess.run(
+            [
+                "git",
+                *_SAFE,
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--shared",
+                str(spec.bare_path),
+                str(repo),
+            ],
+            env=_ENV,
+            check=True,
+        )
+        subprocess.run(
+            ["git", *_SAFE, "checkout", "-q", "--detach", env.task.base_commit],
+            cwd=repo,
+            env=_ENV,
+            check=True,
+        )
         if diff:
-            subprocess.run(["git", *_SAFE, "apply", "--binary", "-"], cwd=repo, env=_ENV,
-                           input=diff.encode("utf-8", "surrogateescape"), check=True)
+            subprocess.run(
+                ["git", *_SAFE, "apply", "--binary", "-"],
+                cwd=repo,
+                env=_ENV,
+                input=diff.encode("utf-8", "surrogateescape"),
+                check=True,
+            )
         tree = {}
         for path in repo.rglob("*"):
             rel = path.relative_to(repo).as_posix()
@@ -70,8 +91,14 @@ def rebuilt_tree(env, diff: str) -> dict[str, tuple]:
 def test_extracted_tree_matches_the_agents_final_work_byte_for_byte(env):
     steps = [
         ("create_file", {"path": "tomlkit/new_module.py", "content": "VALUE = 'é ✓'\n"}),
-        ("str_replace", {"path": "tomlkit/__init__.py", "old": "from tomlkit.api import",
-                         "new": "from tomlkit.api import  "}),
+        (
+            "str_replace",
+            {
+                "path": "tomlkit/__init__.py",
+                "old": "from tomlkit.api import",
+                "new": "from tomlkit.api import  ",
+            },
+        ),
         ("bash", {"command": "printf '\\x00\\x01\\xff binary' > tomlkit/blob.bin"}),
         ("bash", {"command": "printf '#!/bin/sh\\necho hi\\n' > run.sh && chmod +x run.sh"}),
         ("bash", {"command": "ln -s tomlkit/api.py api_link.py"}),
@@ -90,7 +117,7 @@ def test_extracted_tree_matches_the_agents_final_work_byte_for_byte(env):
     gitlinks = {"tests/toml-test"}
     expected = {k: v for k, v in actual.items() if not _skip(k, artifacts, gitlinks)}
     got = {k: v for k, v in rebuilt.items() if not _skip(k, artifacts, gitlinks)}
-    assert set(got) == set(expected), (set(got) ^ set(expected))
+    assert set(got) == set(expected), set(got) ^ set(expected)
     for path in expected:
         assert got[path] == expected[path], path
     assert "README.md" not in got and got["api_link.py"] == ("link", "tomlkit/api.py")
@@ -101,12 +128,29 @@ def test_planted_package_copy_and_metadata_are_detected(env):
     from repogym.env.sandbox import _SETUP_SOURCE
 
     name = env.sandbox.name
-    _docker("exec", "-u", "0", name, "cp", "-r", "/work/tomlkit",
-            "/usr/local/lib/python3.11/site-packages/tomlkit")
+    _docker(
+        "exec",
+        "-u",
+        "0",
+        name,
+        "cp",
+        "-r",
+        "/work/tomlkit",
+        "/usr/local/lib/python3.11/site-packages/tomlkit",
+    )
     code = _SETUP_SOURCE.replace('if __name__ == "__main__":\n    main()', "") + (
-        "\nimport json,sys\nprint(json.dumps(scan_copies(json.loads(sys.argv[1]))))")
-    out = _docker("exec", "-u", "0", name, "python3", "-c", code,
-                  '{"packages": ["tomlkit"], "dists": ["tomlkit"]}').stdout.decode()
+        "\nimport json,sys\nprint(json.dumps(scan_copies(json.loads(sys.argv[1]))))"
+    )
+    out = _docker(
+        "exec",
+        "-u",
+        "0",
+        name,
+        "python3",
+        "-c",
+        code,
+        '{"packages": ["tomlkit"], "dists": ["tomlkit"]}',
+    ).stdout.decode()
     assert "site-packages/tomlkit" in out
     _docker("exec", "-u", "0", name, "sh", "-c", f"echo {TASK} > /etc/leak.txt")
     checks = env.sandbox._check_metadata(type("R", (), {})())
@@ -114,18 +158,28 @@ def test_planted_package_copy_and_metadata_are_detected(env):
 
 
 def test_file_tools_refuse_symlinks_out_of_work(env):
-    env.step(Action(tool="bash", arguments={"command": "ln -s /etc escape && ln -s /etc/passwd pw"}))
-    for tool, args in [("view_file", {"path": "pw"}),
-                       ("create_file", {"path": "escape/evil", "content": "x"}),
-                       ("str_replace", {"path": "pw", "old": "root", "new": "toor"})]:
+    env.step(
+        Action(tool="bash", arguments={"command": "ln -s /etc escape && ln -s /etc/passwd pw"})
+    )
+    for tool, args in [
+        ("view_file", {"path": "pw"}),
+        ("create_file", {"path": "escape/evil", "content": "x"}),
+        ("str_replace", {"path": "pw", "old": "root", "new": "toor"}),
+    ]:
         obs, _, _ = env.step(Action(tool=tool, arguments=args))
         assert not obs.ok and "outside /work" in obs.text, obs.text
 
 
 def test_agent_runs_unprivileged_and_offline(env):
-    obs, _, _ = env.step(Action(tool="bash", arguments={
-        "command": "id -u; touch /usr/local/lib/python3.11/site-packages/x 2>&1; "
-                   "python -c \"import socket; socket.create_connection(('1.1.1.1', 53), 3)\" "
-                   "2>&1 | tail -1"}))
+    obs, _, _ = env.step(
+        Action(
+            tool="bash",
+            arguments={
+                "command": "id -u; touch /usr/local/lib/python3.11/site-packages/x 2>&1; "
+                "python -c \"import socket; socket.create_connection(('1.1.1.1', 53), 3)\" "
+                "2>&1 | tail -1"
+            },
+        )
+    )
     assert obs.text.splitlines()[1] == "1000"
     assert "Permission denied" in obs.text and "unreachable" in obs.text.lower()
