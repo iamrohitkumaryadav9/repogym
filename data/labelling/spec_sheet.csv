@@ -1,0 +1,605 @@
+task_id,issue_title,issue_body_excerpt,test_patch_excerpt,links,my_spec_clear (yes / no),notes
+pallets__click-3482,"""I/O operation on closed file"" error with CliRunner and echo_via_pager under 8.4","When `echo_via_pager` is used in the command, `CliRunner.invoke` fails with: > ValueError: I/O operation on closed file. This started happening with Click 8.4, does not happen with 8.3.3. Reproducer: ```python from click import command, echo_via_pager from click.testing import CliRunner @command() def cli(): echo_via_pager(""Hello, Click!"") runner = CliRunner() runner.invoke(cli) ``` Traceback: ``` Traceback (most recent call last): File "".../echo_via_pager.py"", line 11, in <module> runner.invoke(cli) ~~~~~~~~~~~~~^^^^^ File "".../.venv/echo-via-pager/lib/python3.13/site-packages/click/testing.py"", line 676, in invoke sys.stdout.flush() ~~~~~~~~~~~~~~~~^^ ValueError: I/O operation on closed file. ``` Environment: - OS: Ubuntu 24.04.4, Linux 6.17 - Python version: 3.13.5 - Click version: 8.4","    stream = io.StringIO()
+    monkeypatch.setattr(click._termui_impl, ""StringIO"", lambda: stream)
+    assert not stream.closed
+    assert stream.getvalue() == styled_text
+def test_with_echo_via_pager():
+    @click.command()
+    def cli():
+        click.echo_via_pager(""Hello, Click!"")
+
+    runner = CliRunner()
+    result = runner.invoke(cli)
+    assert not result.exception
+    assert result.output == ""Hello, Click!\n""
+",https://github.com/pallets/click/issues/3449 https://github.com/pallets/click/pull/3482,,
+python-poetry__tomlkit-510,Security: Uncontrolled Recursion DoS in parser.py (CWE-674),"## Security Vulnerability: Uncontrolled Recursion DoS **CWE**: [CWE-674: Uncontrolled Recursion](https://cwe.mitre.org/data/definitions/674.html) **Severity**: MEDIUM (CVSS 5.3 — AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L) **90-day disclosure deadline**: 2026-06-06 ### Summary The recursive call chains in `tomlkit/parser.py` have no depth limit. A crafted TOML input with deeply nested arrays or inline tables triggers a `RecursionError`, crashing the Python process. ### Affected Code - **File**: `tomlkit/parser.py` - **Lines**: 434-435, 589, 621-650 - **Call chains**: - `_parse_value` → `_parse_array` → `_parse_value` (nested arrays) - `_parse_value` → `_parse_inline_table` → `_parse_key_value` → `_parse_value` (nested inline tables) ### Proof of Concept ```python import tomlkit # Deeply nested arrays — crashes with RecursionError payload = 'x = ' + '[' * 500 + '1' + ']' * 500 tomlkit.parse(payload) # RecursionError # Deeply nested inline tables payload2 = 'x = ' + '{a = ' * 200 + '1' + '}' * 200 tomlkit.parse(payload2) # RecursionError ``` ### Impact Denial of service against any application that parses user-supplied TOML using tomlkit. This includes: - Web services accepting TOML configuration via API - CI/CD systems parsing `pyproject.toml` from untrusted sources - Any service where users can upload or submit TOML content The `RecursionError` kills the current thread/request handler. Depending on the server architecture, this could crash the entire process. ### Suggested Fix Add ...","from tomlkit.parser import Parser
+
+
+@pytest.mark.parametrize(
+    ""payload"",
+    [
+        ""x = "" + ""["" * 500 + ""1"" + ""]"" * 500,
+        ""x = "" + ""{a = "" * 500 + ""1"" + ""}"" * 500,
+        ""x = "" + ""[{a = "" * 500 + ""1"" + ""}]"" * 500,
+        ""."".join([""a""] * 500) + "" = 1"",
+        ""["" + ""."".join([""a""] * 500) + ""]\nx = 1"",
+        ""[["" + ""."".join([""a""] * 500) + ""]]\nx = 1"",
+    ],
+)
+def test_parse_rejects_deeply_nested_documents(payload: str) -> None:
+    """"""Nesting beyond the depth limit raises ParseError, not RecursionError.""""""
+    with pytest.raises(tomlkit.exceptions.ParseError):
+        parse(payload)
+
+
+def test_parse_accepts_nesting_at_the_depth_limit() -> None:
+    depth = Parser.MAX_NESTING_DEPTH
+    array = ""x = "" + ""["" * depth + ""1"" + ""]"" * depth
+    assert parse(array).as_string() == array
+    dotted = ""."".join([""a""] * depth) + "" = 1""
+    assert parse(dotted).as_string() == dotted",https://github.com/python-poetry/tomlkit/issues/459 https://github.com/python-poetry/tomlkit/pull/510,,
+pylint-dev__astroid-2972,MemoryError when inferring formatted string with large width value,"### Steps to reproduce The following code triggers a `MemoryError` in astroid: ```python x=f'{0:11111111111}' ``` This bug was discovered by OSS-Fuzz: https://issues.oss-fuzz.com/issues/421940232 (report not public yet) ### Current behavior ``` Traceback (most recent call last): File ""pylint/pylint/utils/ast_walker.py"", line 87, in walk callback(astroid) File ""pylint/pylint/extensions/redefined_variable_type.py"", line 100, in visit_assign _type = node_type(node.value) ^^^^^^^^^^^^^^^^^^^^^ File ""pylint/pylint/checkers/utils.py"", line 1501, in node_type for var_type in node.infer(): File ""astroid/astroid/nodes/node_ng.py"", line 165, in infer for i, result in enumerate(self._infer(context=context, **kwargs)): File ""astroid/astroid/nodes/node_classes.py"", line 4785, in _infer yield from self._infer_with_values(context) File ""astroid/astroid/nodes/node_classes.py"", line 4793, in _infer_with_values for inferred in self._infer_from_values(self.values, context): File ""astroid/astroid/nodes/node_classes.py"", line 4811, in _infer_from_values for node in cls._safe_infer_from_node(nodes[0], context, **kwargs): File ""astroid/astroid/nodes/node_classes.py"", line 4832, in _safe_infer_from_node yield from node._infer(context, **kwargs) File ""astroid/astroid/nodes/node_classes.py"", line 4702, in _infer formatted = format(value_to_format, format_spec.value) ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ MemoryError ``` ### Expected behavior No crash ### Version 580d17cd55af78","def test_fstring_large_width_no_memory_error() -> None:
+    """"""MemoryError should not crash inference for f-strings with huge width.
+
+    Regression test for https://github.com/pylint-dev/astroid/issues/2762
+    """"""
+
+    class OOMInt(int):
+        """"""An int whose __format__ raises MemoryError, simulating f'{0:>11111111111}'.""""""
+
+        def __format__(self, spec: str) -> str:
+            raise MemoryError
+
+    node = extract_node(""f'{0:>9}'"")
+    # Replace the Const value with our OOMInt so format() raises MemoryError
+    # without actually allocating a huge string.
+    fmt_value = node.values[0]
+    fmt_value.value.value = OOMInt(0)
+    inferred = node.inferred()
+    assert len(inferred) == 1
+    assert inferred[0] is util.Uninferable
+",https://github.com/pylint-dev/astroid/issues/2762 https://github.com/pylint-dev/astroid/pull/2972,,
+pylint-dev__astroid-3072,`TypeError: argument of type 'int' is not a container or iterable` with non-string enum attribute,"### Steps to reproduce The following code triggers a `TypeError` in astroid: ```python from enum import Enum Enum(""e"", (1,)) ``` I found the bug during a local fuzzing run. ### Current behavior ```python-traceback Traceback (most recent call last): File ""pylint/pylint/checkers/utils.py"", line 1374, in safe_infer value = next(infer_gen) File ""astroid/astroid/nodes/node_ng.py"", line 145, in infer for result in self._explicit_inference( ~~~~~~~~~~~~~~~~~~~~~~~~^ self, # type: ignore[arg-type] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ context, ^^^^^^^^ **kwargs, ^^^^^^^^^ ): ^ File ""astroid/astroid/inference_tip.py"", line 70, in inner raise e from None File ""astroid/astroid/inference_tip.py"", line 66, in inner func(node, context, **kwargs) ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^ File ""astroid/astroid/brain/brain_namedtuple_enum.py"", line 359, in infer_enum class_node = infer_func_form( ~~~~~~~~~~~~~~~^ node, ^^^^^ ...<3 lines>... enum=True, ^^^^^^^^^^ )[0] ^ File ""astroid/astroid/brain/brain_namedtuple_enum.py"", line 140, in infer_func_form attributes = [attr for attr in attributes if "" "" not in attr] ^^^^^^^^^^^^^^^ TypeError: argument of type 'int' is not a container or iterable The above exception was the direct cause of the following exception: Traceback (most recent call last): File ""pylint/pylint/utils/ast_walker.py"", line 87, in walk callback(astroid) ~~~~~~~~^^^^^^^^^ File ""pylint/pylint/checkers/base/basic_checker.py"", line 475, in visit_expr inferred = utils.safe_infer(expr) if ...","from astroid import bases, builder, nodes, objects, util
+    def test_enum_func_form_non_string_attribute_no_crash(self) -> None:
+        """"""A functional Enum with a non-string member name is invalid.
+
+        Regression test for https://github.com/pylint-dev/astroid/issues/3068
+        """"""
+        node = builder.extract_node(""""""
+        from enum import Enum
+        Enum(""e"", (1,))  #@
+        """""")
+        # Inference must not raise ``TypeError``; it falls back to default.
+        assert next(node.infer()) is util.Uninferable",https://github.com/pylint-dev/astroid/issues/3068 https://github.com/pylint-dev/astroid/pull/3072,,
+pylint-dev__astroid-2515,"brain_attrs doesn't add PEP 526 instance variable annotations, causing `no-member` errors","### Steps to reproduce In some contexts, Pylint issues a false positive with an attrs class with only a type annotation (see [PEP 526](https://peps.python.org/pep-0526/#class-and-instance-variable-annotations). If we add the attribute via the astroid brain_attrs then this fixes the issue. (I'm not sure if this is a duplicate of #724 ). This is supported at runtime with the newer `attrs` decorators. ```py # pylint: disable=missing-docstring,too-few-public-methods,unnecessary-lambda-assignment import attrs # pylint: disable=import-error @attrs.define class AttrsCls: x: int ac = AttrsCls(1) ac.x += 1 ``` ### Current behavior ``` regression_xxxx_attrs_no_member.py:13: [E1101(no-member), ] Instance of 'AttrsCls' has no 'x' member ``` ### Expected behavior _No error_","from astroid import exceptions, nodes
+
+    def test_attr_with_only_annotation_fails(self) -> None:
+        code = """"""
+        import attr
+
+        @attr.s
+        class Foo:
+            bar: int
+        Foo()
+        """"""
+        with self.assertRaises(exceptions.AttributeInferenceError):
+            next(astroid.extract_node(code).infer()).getattr(""bar"")
+
+    def test_attrs_with_only_annotation_works(self) -> None:
+        code = """"""
+        import attrs
+
+        @attrs.define
+        class Foo:
+            bar: int
+            baz: str = ""hello""
+        Foo(1)
+        """"""
+        for attr_name in (""bar"", ""baz""):
+            should_be_unknown = next(astroid.extract_node(code).infer()).getattr(
+                attr_name
+            )[0]
+            self.assertIsInstance(should_be_unknown, astroid.Unknown)",https://github.com/pylint-dev/astroid/issues/2514 https://github.com/pylint-dev/astroid/pull/2515,,
+pylint-dev__astroid-2744,Raise an error if .root() is not a module,"Originally reported by: **Claudiu Popa (BitBucket: [PCManticore](http://bitbucket.org/PCManticore), GitHub: @PCManticore)** --- .root() should guarantee that what it returns is a module. Unfortunately, I found a couple of cases, which involved transforms, where .root() return classes instead of modules. We should raise an error in that case (and probably we should fix whatever was returning a class to return a module instead). --- - Bitbucket: https://bitbucket.org/logilab/astroid/issue/120","from astroid.nodes.node_classes import UNATTACHED_UNKNOWN
+        helpers.safe_infer(UNATTACHED_UNKNOWN)
+    UNATTACHED_UNKNOWN,
+        unknown1 = nodes.Unknown(parent=SYNTHETIC_ROOT)
+        unknown2 = nodes.Unknown(lineno=1, col_offset=0, parent=SYNTHETIC_ROOT)
+        assert unknown1.as_string() == ""Unknown.Unknown()""
+        assert unknown2.as_string() == ""Unknown.Unknown()""
+    assert isinstance(next(UNATTACHED_UNKNOWN.infer()), type(util.Uninferable))
+    assert isinstance(UNATTACHED_UNKNOWN.name, str)
+    assert isinstance(UNATTACHED_UNKNOWN.qname(), str)
+            args[name] = UNATTACHED_UNKNOWN
+    node: nodes.ClassDef = _extract_single_node(
+@pytest.mark.xfail(reason=""Not fixed yet"")
+def test_regression_eval_get_of_arg() -> None:
+    """"""Regression test for #2743""""""
+    node = _extract_single_node(""eval.__get__(1)"")
+    with pytest.raises(InferenceError):
+        next(node.infer())
+",https://github.com/pylint-dev/astroid/issues/120 https://github.com/pylint-dev/astroid/pull/2744,,
+python-attrs__attrs-1221,Using `cached_property` results in undesired references,"I'm excited to see that the latest `attrs` version `23.2.0` now supports using `cached_property` in combination with slotted classes 🥇👍🏼 I was about to enable this feature in my code base but then noticed the following issue: the garbage collection step described [here](https://www.attrs.org/en/stable/glossary.html#term-slotted-classes) no longer seems to work. I haven't checked how exactly the use of `cached_property` was enabled, but the applied mechanism seems to keep some references to the original classes and thus messes with the garbage collector, which I think is an undesired side-effect. Here a minimal example to reproduce the issue: ```python import gc from functools import cached_property from attrs import define @define class Base: pass @define class SubClass(Base): @cached_property def value(self) -> int: return 0 gc.collect() print(Base.__subclasses__()) ``` With the `cached_property` decorator, this gives the following output: ```python [<class '__main__.SubClass'>, <class '__main__.SubClass'>] ``` while removing it yields the desired result: ```python [<class '__main__.SubClass'>] ```","from attr._compat import PY310, PY_3_8_PLUS
+    @pytest.mark.skipif(not PY_3_8_PLUS, reason=""cached_property is 3.8+"")
+    def test_no_references_to_original_when_using_cached_property(self):
+        """"""
+        When subclassing a slotted class and using cached property, there are no stray references to the original class.
+        """"""
+
+        @attr.s(slots=True)
+        class C:
+            pass
+
+        @attr.s(slots=True)
+        class C2(C):
+            @functools.cached_property
+            def value(self) -> int:
+                return 0
+
+        # The original C2 is in a reference cycle, so force a collect:
+        gc.collect()
+
+        assert [C2] == C.__subclasses__()
+
+@pytest.mark.skipif(not PY_3_8_PLUS, reason=""cached_property is 3.8+"")
+def test_slotted_cached_property_can_access_super():
+    """"""
+    Multiple sub-classes shouldn't break cached properties.
+    """"""
+
+    @attr.s(slots=True)
+    class A:
+        x = attr.ib(kw_only=True)
+
+    @attr.s(slots=True)
+    class B(A):
+        @functools.cached_property
+        def f(self):
+            return super().x * 2
+
+    assert B(x=1).f == 2
+",https://github.com/python-attrs/attrs/issues/1220 https://github.com/python-attrs/attrs/pull/1221,,
+PyCQA__isort-2313,Option to add empty line(s) between top-level package imports,"Hi! I've looked extensively in the documentation but I don't think there's a way to add an empty line between top-level package imports so this: ```python import os import sys from django.db.models.signals import m2m_changed from django.utils import functional from django_filters import BooleanFilter from junitparser import JUnitXml from junitparser import TestSuite from loguru import logger ``` Would turn into this: ```python import os import sys from django.db.models.signals import m2m_changed from django.utils import functional from django_filters import BooleanFilter from junitparser import JUnitXml from junitparser import TestSuite from loguru import logger ``` Am I missing something? If it is indeed not possible, I'd be willing to push a PR to implement the option. Any push-back ?","
+
+def test_sort_separate_packages_issue_2104():
+    """"""
+    Test to ensure that packages within a section can be separated by blank lines.
+    See: https://github.com/PyCQA/isort/issues/2104
+    """"""
+
+    # Base case as described in issue
+    assert (
+        isort.code(
+            """"""
+import os
+import sys
+
+from django.db.models.signals import m2m_changed
+from django.utils import functional
+from django_filters import BooleanFilter
+from junitparser import JUnitXml
+from junitparser import TestSuite
+from loguru import logger
+"""""",
+            force_single_line=True,
+            separate_packages=[""THIRDPARTY""],
+        )
+        == """"""
+import os
+import sys
+
+from django.db.models.signals import m2m_changed
+from django.utils import functional
+
+from django_filters import BooleanFilter
+
+from junitparser import JUnitXml
+from junitparser import TestSuite
+
+from loguru import logger
+""""""
+    )
+... (68 more added lines)",https://github.com/PyCQA/isort/issues/2104 https://github.com/PyCQA/isort/pull/2313,,
+pallets__click-3695,Make unimported utilities explicitely private,This utilities are not imported in __init__: - LazyFile - KeepOpenFile - make_short_help - PacifyFlushWrapper - safecall Is that intentional?,"import pytest
+
+import click
+
+
+@pytest.mark.parametrize(""module"", [click, click.utils], ids=[""click"", ""click.utils""])
+@pytest.mark.parametrize(""name"", [""get_binary_stream"", ""get_text_stream""])
+def test_stream_helper_deprecated(module, name):
+    with pytest.warns(DeprecationWarning, match=name):
+        getattr(module, name)
+
+
+@pytest.mark.parametrize(
+    ""name"",
+    [
+        ""LazyFile"",
+        ""KeepOpenFile"",
+        ""make_default_short_help"",
+        ""PacifyFlushWrapper"",
+        ""safecall"",
+    ],
+)
+def test_utilities_deprecated(name):
+    with pytest.warns(DeprecationWarning, match=name):
+        getattr(click.utils, name)
+from click.utils import _get_binary_stream
+        i = _get_binary_stream(""stdin"")
+        o = _get_binary_stream(""stdout"")
+        i = _get_binary_stream(""stdin"")
+        o = _get_binary_stream(""stdout"")
+        i = _get_binary_stream(""stdin"")
+        o = _get_binary_stream(""stdout"")
+        for e_line, a_line in zip(expected, click.utils._KeepOpenFile(f), strict=False):
+        with click.utils._LazyFile(f.name) as lf:
+    out = click.utils._make_default_short_help(value, max_length)",https://github.com/pallets/click/issues/3099 https://github.com/pallets/click/pull/3695,,
+PyCQA__isort-2715,skip_gitignore=true will break ignoring directories defined in skip during filesystem traversal,"### Description When starting isort with `--skip_gitignore`, directories that should not be traversed because they are configured in `skip` will be traversed. From what I've seen, this is purely a performance problem, so all files that should be skipped will be filtered out at some later point. ### Instructions to reproduce Minimal setup (note: ""node_modules"" is in the default skip values.) ```bash # assuming isort 5.10.1 is installed (`pip3 install isort`) mkdir test && cd test git init mkdir -p node_modules/this_should_not_be_accessed touch test.py strace isort . 2>&1 | grep this_should_not # as expected, not queried strace isort --skip-gitignore . 2>&1 | grep this_should_not # suddenly, stat and open syscalls appear ``` On a side note: Add more files, and the node_modules folder will be queried more often: ```bash touch test2.py strace isort --skip-gitignore . 2>&1 | grep this_should_not # 2 stat and 2 open calls touch test3.py strace isort --skip-gitignore . 2>&1 | grep this_should_not # 3 stat and 3 open calls ``` adding `node_modules` to a `.gitignore` doesn't help, even though the directory should then be double-ignored by isort (this is #1895). ```bash echo ""node_modules"" >> .gitignore strace isort --skip-gitignore . 2>&1 | grep this_should_not # 3 stat and 3 open calls ``` ### Environment & Versions Run on ubuntu21.10 with python3.9.7. Actual syscalls probably depend on the python interpreter, if you can't reproduce, I'll probably be able to figure out what python ...","def test_gitignore_skips_ignored_folder(tmp_path: Path) -> None:
+    """"""Ignored folders are skipped as a whole instead of being walked file by file.
+    See: https://github.com/PyCQA/isort/issues/1912
+    """"""
+    subprocess.run([""git"", ""init"", str(tmp_path)])
+    (tmp_path / "".gitignore"").write_text(""ignored_dir/\n"")
+    for folder in (""ignored_dir"", ""ignored_dir/nested"", ""kept_dir/nested""):
+        (tmp_path / folder).mkdir(parents=True)
+        (tmp_path / folder / ""has_imports.py"").write_text(""import b\nimport a\n"")
+
+    config = Config(skip_gitignore=True)
+    assert config.is_skipped(tmp_path / ""ignored_dir"")
+    assert config.is_skipped(tmp_path / ""ignored_dir"" / ""nested"")
+    assert not config.is_skipped(tmp_path / ""kept_dir"")
+    assert not config.is_skipped(tmp_path / ""kept_dir"" / ""nested"")
+",https://github.com/PyCQA/isort/issues/1912 https://github.com/PyCQA/isort/pull/2715,,
+PyCQA__isort-2331,isort-identify-imports fails if there are unreadable files in the directory,"Steps to reproduce: 1. mkdir new_directory 2. cd new_directory 3. ln -s not_exist bad_link.py 4. isort-identify-imports . isort-identify-imports fails with FileNotFoundError. The same problem occurs when the files is unreadable due to permission issues. In the case of isort, it is not an error but UserWarning. So I believe isort-identify-imports should do the same. Emacs creates a lock file with a name like `.#some_file.py` as a symbolic link to a nonexistent target when there are unsaved changes in the buffer. As a result, running isort-identify-imports with an unsaved buffer in Emacs will result in an error.","def test_find_imports_in_file_error(tmpdir):
+    broken_link = tmpdir.join(""broken_link.py"")
+    broken_link.mksymlinkto(""not-exist"")
+    with pytest.warns(UserWarning):
+        assert not list(api.find_imports_in_file(broken_link))
+",https://github.com/PyCQA/isort/issues/2330 https://github.com/PyCQA/isort/pull/2331,,
+pallets__click-3739,"[Bug] On Windows, get_pager_file returns a typing.BinaryIO object NOT typing.TextIO","Inside `src/click/_termui_impl.py`, the function `get_pager_file` delegates the creation of a tempfile to `_tempfilepager`, which returns a `BinaryIO` object of the opened file: ```python f = tempfile.NamedTemporaryFile(mode=""wb"", delete=False) try: yield t.cast(t.BinaryIO, f), encoding, color ... ``` Which is called by _pager_contextmanager in ```python ... if pager_cmd_parts: if WIN: return _tempfilepager(pager_cmd_parts, color) return _pipepager(pager_cmd_parts, color) ... if WIN or sys.platform.startswith(""os2""): return _tempfilepager([""more""], color) return _pipepager([""less""], color) ``` In the end `get_pager_file` ```python def get_pager_file(color: bool | None = None) -> t.Generator[t.TextIO, None, None]: ... with _pager_contextmanager(color=color) as (stream, encoding, color): # Split streams by capabilities rather than the abstract TextIO / # BinaryIO annotations: buffered text streams can be unwrapped to bytes, # while other streams are yielded as-is. wrapper: MaybeStripAnsi | None = None if _has_binary_buffer(stream): # Text stream backed by a binary buffer. wrapper = MaybeStripAnsi(stream.buffer, color=color, encoding=encoding) stream = wrapper try: # Narrow the BinaryIO | TextIO union that _pager_contextmanager # yields; the caller writes text to the pager. yield t.cast(t.TextIO, stream) ... ``` In the above `yield t.cast(t.TextIO, stream)` stream object will be `BinaryIO`, contradicting the `TextIO` annotation of the return value, all because it was created ...","def _force_tempfile_pager(monkeypatch, pager_cmd=""cat""):
+    """"""Route ``get_pager_file`` through the ``_tempfilepager`` backend.
+
+    That backend is only reachable on Windows, so the platform flag and the tty
+    probes are faked to exercise it from any runner.
+    """"""
+    cmd_path = shutil.which(pager_cmd)
+    assert cmd_path is not None, f""{pager_cmd} not available""
+    monkeypatch.setattr(click._termui_impl, ""isatty"", lambda _: True)
+    monkeypatch.setattr(click._termui_impl, ""WIN"", True)
+    monkeypatch.setitem(click._termui_impl.os.environ, ""PAGER"", cmd_path)
+
+
+def _page_with_get_pager_file():
+    with click.get_pager_file() as pager:
+        pager.write(""hello\n"")
+
+
+def _page_with_echo_via_pager():
+    click.echo_via_pager(""hello"")
+
+
+@pytest.mark.skipif(shutil.which(""cat"") is None, reason=""cat not available"")
+@pytest.mark.parametrize(
+    ""page"",
+    [
+        pytest.param(_page_with_get_pager_file, id=""get_pager_file""),
+        pytest.param(_page_with_echo_via_pager, id=""echo_via_pager""),
+    ],
+)
+def test_tempfile_pager_accepts_text(monkeypatch, capfd, page):
+    """"""The temp file backend must yield a text stream (issues #3731, #3740).
+
+    ``_tempfilepager`` opens its temp file in binary mode and yields the
+    ``_TemporaryFileWrapper`` straight to ``get_pager_file``. That wrapper
+    exposes no ``.buffer``, so the ``_has_binary_buffer`` probe is False and no
+    ``MaybeStripAnsi`` wrapper is installed. The caller then writes ``str`` to a
+    binary handle and gets ``TypeError: a bytes-like object is required``.
+    """"""
+    _force_tempfile_pager(monkeypatch)
+... (30 more added lines)",https://github.com/pallets/click/issues/3740 https://github.com/pallets/click/pull/3739,,
+python-poetry__tomlkit-536,Missing keys in repro of tomlkit.container.OutOfOrderTableProxy,"Hello, Here's a strange one. From this toml: ```toml a.b.c = ""d"" a.b.e = ""f"" ``` When we access `value[""a""]`, it behaves correctly but the `repr` is missing the ""c"" key. ```python import tomlkit print(tomlkit.__version__) # 0.13.3 a = tomlkit.parse("""""" a.b.c = ""d"" a.b.e = ""f"" """""") assert a == {""a"": {""b"": {""c"": ""d"", ""e"": ""f""}}} # ok value = a[""a""] expected = {""b"": {""c"": ""d"", ""e"": ""f""}} assert value == expected # ok print(value) # {'b': {'e': 'f'}} print(expected) # {'b': {'c': 'd', 'e': 'f'}} assert repr(value) == repr(expected) # Traceback (most recent call last): # File ""/Users/joachim/code/raincoat2/oops.py"", line 19, in <module> # assert repr(value) == repr(expected) # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ # AssertionError ``` As far as I can tell, this doesn't happen on a, only on `a[""a""]`. I've tried to simplify the issue as much as possible.","def test_repr_out_of_order_table_proxy() -> None:
+    doc = parse(""""""\
+a.b.c = ""d""
+a.b.e = ""f""
+"""""")
+    expected = ""{'b': {'c': 'd', 'e': 'f'}}""
+
+    assert repr(doc[""a""]) == expected
+    assert str(doc[""a""]) == expected
+",https://github.com/python-poetry/tomlkit/issues/439 https://github.com/python-poetry/tomlkit/pull/536,,
+python-attrs__attrs-1457,Suggestion: Overriding class-level `kw_only=True` option in attributes,"First of all, thank you for building such a wonderful package! It is now an essential part of both my work and my hobby projects. This issue is similar to #481, but I think it's more suitable to open a new issue for discussion instead of reviving a 4-year-old thread. `kw_only` can be set both on the class decorator and on attributes. When `kw_only=False` on the class (this is the default), one can set `kw_only=True` on attributes to make only those attributes keyword-only in the constructor. However, when `kw_only=True` on the class, all attributes (including those defined in base classes) become keyword-only, and setting `kw_only=False` on attributes will not work. The following code snippet implements the logic described above: https://github.com/python-attrs/attrs/blob/7091b1f89ac2436e8ba96f85a799b66c38a3c9f4/src/attr/_make.py#L564-L566 In my opinion, this is a little confusing, since many of the other options that exist on both the class and attributes do give you a way to opt-out for a subset of attributes. For example, `eq` (and friends), `repr`, and `init` all allow you to exclude an attribute from the auto-generated functions. It feels natural to assume the same for `kw_only`; I don't have exact stats, but I know quite a few coworkers who were surprised by the current behavior. It would also be useful to allow overriding. For example, I have a class whose ideal constructor signature should look like this: ```python SomeObject(x, y, *, kw1=..., kw2=..., kw3=..., ...) ...","attrs_st = simple_attrs.map(
+    lambda c: Attribute.from_counting_attr(""name"", c, False)
+)
+        _transform_attrs(C, None, False, False, False, True, None)
+        attrs, _, _ = _transform_attrs(
+            C, None, False, False, False, True, None
+        )
+            C, None, False, False, False, True, None
+            C, None, False, False, False, True, None
+            _transform_attrs(C, None, False, False, False, True, None)
+        Converts all attributes in the current class if `kw_only` is provided.
+        Base class attributes are **not** affected.
+            C, None, False, True, False, True, None
+        )
+
+        assert len(attrs) == 3
+        assert len(base_attrs) == 1
+
+        for a in attrs:
+            if a.name == ""b"":
+                assert a.kw_only is False
+            else:
+                assert a.kw_only is True
+
+        attrs, base_attrs, _ = _transform_attrs(
+            C,
+            None,
+            False,
+            True,
+            True,  # force kw-only
+            True,
+            None,
+            C, {""x"": attr.ib()}, False, False, False, True, None
+        When `force_kw_only=True`, subclass `kw_only` propagates to attrs
+        inherited from the base, allowing non-default following default.
+        with pytest.raises(TypeError):
+            C(0, y=1)
+        @attr.s(kw_only=True, force_kw_only=False)
+        class C(Base):
+            y = attr.ib()
+... (147 more added lines)",https://github.com/python-attrs/attrs/issues/980 https://github.com/python-attrs/attrs/pull/1457,,
+PyCQA__isort-2750,"NOQA mode adds another `# NOQA` marker on every run, so the output never converges","NOQA mode adds another `# NOQA` marker on every run, so the output never converges With `multi_line_output=7` (NOQA) and `use_parentheses=True`, an import that carries an opening-line comment gets a new `# NOQA` marker appended on every run: ```python >>> import isort >>> src = (""from my_package.my_module import super_long_file_name as super_long_alias"" ... "" # type: ignore\n"") >>> opts = dict(multi_line_output=7, use_parentheses=True, line_length=40) >>> isort.code(src, **opts) 'from my_package.my_module import super_long_file_name as super_long_alias # NOQA # type: ignore\n' >>> isort.code(isort.code(src, **opts), **opts) 'from my_package.my_module import super_long_file_name as super_long_alias # NOQA # NOQA # type: ignore\n' ``` Each pass reads the previous markers back as one comment and appends another, so the statement never settles and `isort --check` keeps failing on the file it just wrote. The non-parenthesised path (`use_parentheses=False`) is already stable, and output that ends with the marker instead of `# type: ignore` is also what that path produces. Cause: in `isort/output.py::_build_as_imports` the statement is wrapped by `wrap.line()` first and the opening-line comment is attached afterwards; NOQA mode never wraps in parentheses, so there is no opening parenthesis to attach the comment to, and the comment lands behind the marker. A fix that merges the comments before wrapping and keeps the output a fixpoint is ready; I will open a pull request for it. This ...","    comment, the comment is attached to the first line after wrapping. NOQA mode
+    never wraps in parentheses, so the comment is merged into the statement before
+    it is wrapped and ``# NOQA`` is added after it when the line is still too long.
+    In non-NOQA modes the comment is preserved on the ``from X import (`` line
+    without ``# NOQA``.
+    # NOQA mode: the opening-line comment comes first, # NOQA is appended after it.
+        ""  # type: ignore  # NOQA\n""
+def test_noqa_mode_reaches_a_fixpoint_with_an_opening_line_comment() -> None:
+    """"""NOQA mode must not add another ``# NOQA`` marker on every pass.
+
+    The line was wrapped once by ``wrap.line()`` and once more after the
+    opening-line comment moved onto the first line, so every run added a
+    marker and the output never reached a fixpoint.
+    """"""
+    to_sort = (
+        ""from my_package.my_module import super_long_file_name as super_long_alias""
+        ""  # type: ignore\n""
+    )
+
+    first_pass = isort.code(to_sort, multi_line_output=7, use_parentheses=True, line_length=40)
+    assert first_pass.count(""# NOQA"") == 1
+
+    second_pass = isort.code(first_pass, multi_line_output=7, use_parentheses=True, line_length=40)
+    assert second_pass == first_pass
+    assert second_pass.count(""# NOQA"") == 1
+
+
+def test_non_noqa_mode_wraps_with_an_ignored_opening_line_comment_issue_2093() -> None:
+    """"""A non-NOQA wrap mode keeps the parentheses clean of an ignored comment.
+
+    With ``use_parentheses`` and an opening-line comment the statement is wrapped
+    first and the comment is added to the ``from X import (`` line afterwards.
+    When ``ignore_comments`` strips that comment there is nothing to add, so the
+    first line must stay untouched. NOQA mode no longer takes this path, because
+    it never parenthesises the statement.
+    """"""
+    to_sort = (
+        ""from my_package.my_module import super_long_file_name as super_long_alias""
+        ""  # type: ignore\n""
+    )
+... (19 more added lines)",https://github.com/PyCQA/isort/issues/2749 https://github.com/PyCQA/isort/pull/2750,,
+pallets__click-3637,Add support for powershell/cmd tab completions for windows ,Any help or docs about how to implement it would be greatly appreciated. It looks like [click-completion](https://github.com/click-contrib/click-completion) package offer support for powershell for click 7.x and below. How to apply it for click v8.x that offer 'native' autocompletions?,"from click.shell_completion import PowerShellComplete
+def test_full_source_powershell(runner):
+    # The PowerShell source script sets the completion env var via
+    # `$env:_CLI_COMPLETE = 'powershell_complete'`, so the substring
+    # `_CLI_COMPLETE=powershell_complete` used by test_full_source above
+    # is not present. Assert on the PowerShell-specific markers instead.
+    cli = Group(""cli"", commands=[Command(""a""), Command(""b"")])
+    result = runner.invoke(cli, env={""_CLI_COMPLETE"": ""powershell_source""})
+    assert ""Register-ArgumentCompleter"" in result.output
+    assert ""powershell_complete"" in result.output
+
+
+        (
+            ""powershell"",
+            {""COMP_WORDS"": """", ""COMP_CWORD"": ""0""},
+            ""plain\na\n_\nplain\nb\nbee\n"",
+        ),
+        (""powershell"", {""COMP_WORDS"": ""a b"", ""COMP_CWORD"": ""1""}, ""plain\nb\nbee\n""),
+
+
+def test_powershell_format_completion_escapes_help():
+    pc = PowerShellComplete(Command(""x""), {}, ""x"", ""_X_COMPLETE"")
+    # Newlines (LF and CRLF) collapse to spaces so the help text stays
+    # on a single line and doesn't break the 3-lines-per-item framing
+    # consumed by the PowerShell completion script.
+    item = CompletionItem(""--at"", help=""first\nsecond\r\nthird"")
+    assert pc.format_completion(item) == ""plain\n--at\nfirst second  third""
+    # Items without help text use the ""_"" sentinel, matching the format
+    # produced by ZshComplete.
+    item = CompletionItem(""--at"")
+    assert pc.format_completion(item) == ""plain\n--at\n_""",https://github.com/pallets/click/issues/2672 https://github.com/pallets/click/pull/3637,,
+python-poetry__tomlkit-435,Add DottedKey to a super table gives wrong output,"I am trying to set dotted keys on an already existing super table. This seems to go wrong during the render method, because the code thinks I want to render everything as a super table. My code: ```py import tomlkit doc = tomlkit.loads("""""" [output.netcdf_scalar] value = 5 """""") output_table = doc[""output""] output_table[tomlkit.key([""csv"", ""path""])] = ""output.csv"" print(tomlkit.dumps(doc)) ``` Output: ```toml csv.path = ""output.csv"" [output.netcdf_scalar] value = 5 ``` Expected: ```toml [output.csv] path = ""output.csv"" [output.netcdf_scalar] value = 5 ``` In the case of rendering the toml, it will say that the item ""csv"" is dotted, while ""output"" is not dotted, and ""csv"" is a super table, so it will not render ""output"" as prefix. But just adding the prefix will be wrong, because you actually need to at the `[output.csv]` table as a head, instead of writing `output.csv.path`. https://github.com/python-poetry/tomlkit/blob/8c963db32784623f8fc076ad4ef9b6b01ab0d542/tomlkit/container.py#L551-L566 I think that the _handle_dotted_key function is in this case not able to indicate that ""csv"" should not be super: https://github.com/python-poetry/tomlkit/blob/8c963db32784623f8fc076ad4ef9b6b01ab0d542/tomlkit/container.py#L123-L126","
+
+def test_appending_to_super_table():
+    content = """"""\
+[a.b]
+value = 5
+""""""
+
+    doc = parse(content)
+    table_a = doc[""a""]
+    table_a.append(tomlkit.key([""c"", ""d""]), ""foo"")
+
+    expected = """"""\
+[a]
+c.d = ""foo""
+
+[a.b]
+value = 5
+""""""
+
+    assert doc.as_string() == expected",https://github.com/python-poetry/tomlkit/issues/431 https://github.com/python-poetry/tomlkit/pull/435,,
+python-attrs__attrs-1449,Collections of inner validators for `deep_iterable`/`deep_mapping`,"This is a copy of the first issue collected in #1206 to enable separate tracking of the bug. ### The issue Some of the inner validators accept lists while others still require the explicit use of `and_`. For consistency, I think all of them should ideally be able to handle lists. For the `member_validator`, the change has been in implemented in https://github.com/python-attrs/attrs/pull/925, but `iterable_validator` still struggles with lists. For example, the following piece of code works, but replacing `any_` with a list will make it fail: ```python @define class A: x: List[str] = field( validator=deep_iterable( member_validator=[instance_of(str), min_len(1)], iterable_validator=and_(instance_of(list), min_len(1)), ), ) ``` For `deep_mapping`, lists/tuples not supported for any of its three arguments.","    @pytest.mark.parametrize(""conv"", [list, tuple])
+    def test_validators_iterables(self, conv):
+        """"""
+        If iterables are passed as validators, they are combined with and_.
+        """"""
+        member_validator = (instance_of(int),)
+        iterable_validator = (instance_of(list), min_len(1))
+
+        v = deep_iterable(conv(member_validator), conv(iterable_validator))
+
+        assert and_(*member_validator) == v.member_validator
+        assert and_(*iterable_validator) == v.iterable_validator
+
+    @pytest.mark.parametrize(""conv"", [list, tuple])
+    def test_validators_iterables(self, conv):
+        """"""
+        If iterables are passed as validators, they are combined with and_.
+        """"""
+        key_validator = (instance_of(str), min_len(2))
+        value_validator = (instance_of(int), ge(10))
+        mapping_validator = (instance_of(dict), max_len(2))
+
+        v = deep_mapping(
+            conv(key_validator),
+            conv(value_validator),
+            conv(mapping_validator),
+        )
+
+        assert and_(*key_validator) == v.key_validator
+        assert and_(*value_validator) == v.value_validator
+        assert and_(*mapping_validator) == v.mapping_validator
+
+    a2 = attr.ib(
+    a3 = attr.ib(
+        type=Tuple[C],
+        validator=attr.validators.deep_iterable(
+            [attr.validators.instance_of(C)],
+            [attr.validators.instance_of(tuple)],
+        ),
+    )
+... (8 more added lines)",https://github.com/python-attrs/attrs/issues/1243 https://github.com/python-attrs/attrs/pull/1449,,
+python-attrs__attrs-1255,Test failures with Python 3.13: stripped indentation from docstrings,"In Python 3.13, compiler strips indents from docstrings. See https://github.com/python/cpython/issues/81283 ``` _______________________ TestDundersUnnamedClass.test_ne ________________________ self = <tests.test_cmp.TestDundersUnnamedClass object at 0x7f8f99705280> def test_ne(self): """""" __ne__ docstring and qualified name should be well behaved. """""" method = self.cls.__ne__ > assert method.__doc__.strip() == ( ""Check equality and either forward a NotImplemented or\n"" "" return the result negated."" ) E AssertionError: assert 'Check equality and either forward a NotImplemented or\nreturn the result negated.' == 'Check equality and either forward a NotImplemented or\n return the result negated.' E Check equality and either forward a NotImplemented or E - return the result negated. E ? -------- E + return the result negated. tests/test_cmp.py:326: AssertionError ______________________ TestDundersPartialOrdering.test_ne ______________________ self = <tests.test_cmp.TestDundersPartialOrdering object at 0x7f8f99705010> def test_ne(self): """""" __ne__ docstring and qualified name should be well behaved. """""" method = self.cls.__ne__ > assert method.__doc__.strip() == ( ""Check equality and either forward a NotImplemented or\n"" "" return the result negated."" ) E AssertionError: assert 'Check equality and either forward a NotImplemented or\nreturn the result negated.' == 'Check equality and either forward a NotImplemented or\n return the result negated.' E Check equality and either forward ...","from attr._compat import PY_3_13_PLUS
+# Compiler strips indents from docstrings in Python 3.13+
+indent = """" if PY_3_13_PLUS else "" "" * 8
+
+            f""{indent}return the result negated.""
+            f""{indent}return the result negated.""
+            f""{indent}return the result negated.""",https://github.com/python-attrs/attrs/issues/1228 https://github.com/python-attrs/attrs/pull/1255,,
+PyCQA__isort-2724,combine_straight_imports mixes up module names on long lines since 9.0.0,"Since 9.0.0, `combine_straight_imports` can change which modules a file imports. With 9.0.2 and otherwise default settings: ```console $ printf 'import email.message\nimport email.utils\nimport http.cookies\nimport importlib.util\nimport os.path\nimport urllib.parse\nimport warnings\n' > m.py $ isort --csi m.py Fixing /tmp/demo/m.py $ cat m.py import email.message, email.utils, http.cookies, importlib.util, os.\ parse, warnings.path, urllib $ python m.py Traceback (most recent call last): File ""/tmp/demo/m.py"", line 1, in <module> import email.message, email.utils, http.cookies, importlib.util, os.\ ModuleNotFoundError: No module named 'os.parse'; 'os' is not a package ``` 8.0.1 leaves the combined line as it is, even though it is longer than the line length. In CPython 3.12's [`Lib/http/server.py`](https://github.com/python/cpython/blob/v3.12.15/Lib/http/server.py#L90-L106), where `import socket` has a comment, the comment also lands in the middle of the line and comments out most of the imports: ```python import copy, datetime, email.utils, html, http.\ parse # For gethostbyaddr().client, io, itertools, mimetypes, os, posixpath, select, shutil, socket, socketserver, sys, time, urllib ``` With `--profile black` the result for `m.py` does not even parse: ```python import email.message, email.utils, http.cookies, importlib.util, os.path, urllib.( parse, warnings, ) ``` Bisecting points at 2b07aa52 (#2568), which sends the combined line through `wrap.line()` in every wrap mode ...","def test_long_combined_straight_imports_keep_their_module_names_issue_2723() -> None:
+    """"""A long combined straight import stays on one line outside NOQA mode.""""""
+    to_sort = (
+        ""import email.message\n""
+        ""import email.utils\n""
+        ""import http.cookies\n""
+        ""import importlib.util\n""
+        ""import os.path\n""
+        ""import urllib.parse\n""
+        ""import warnings\n""
+    )
+
+    assert isort.code(to_sort, combine_straight_imports=True) == (
+        ""import email.message, email.utils, http.cookies, importlib.util, os.path, urllib.parse, ""
+        ""warnings\n""
+    )
+",https://github.com/PyCQA/isort/issues/2723 https://github.com/PyCQA/isort/pull/2724,,
+PyCQA__isort-2626,add_import adds imports above module docstring when docstring is raw string,"* I tried to use the add_import functionality like so: ```add_imports = ""from __future__ import annotations""``` However, it kept destroying my module level docstrings by adding an import before the """""" string. In the project I was working on, we use raw multiline strings`r""""""` which may be messing with the heuristics to detect module level docstrings here: https://github.com/PyCQA/isort/blob/c6a41965247a858a0afd848fbebfca18b8983917/isort/parse.py#L218 As a temporary workaround, adding the append_only flag has seemed to fix it. In short, isort will format my code like the following: ```python from __future__ import annotations r""""""module docstring """""" from __future__ import annotations ``` Here is my isort config: ``` add_imports = ""from __future__ import annotations"" # append_only = true # Enabling this is the workaround profile = 'black' treat_comments_as_code = ""# %%"" ```","from isort.core import STRING_PREFIXES
+
+
+def test_add_import_keeps_a_prefixed_module_docstring_first_issue_1893():
+    """"""``add_imports`` must not move an import above a module docstring that carries a
+    string prefix (``r``, ``b``, ``f``, ``u`` or a legal combination of them), as reported
+    in issue #1893: https://github.com/pycqa/isort/issues/1893
+    """"""
+    # The exact input from the report: the added import was emitted a second time, above
+    # the docstring.
+    reported = 'r""""""module docstring\n""""""\nfrom __future__ import annotations\n'
+    assert isort.code(reported, add_imports=[""from __future__ import annotations""]) == reported
+
+    # The import still has to be added, below the docstring -- where an unprefixed
+    # docstring already puts it.
+    with_code = 'r""""""module docstring\n""""""\n\nx = 1\n'
+    assert (
+        isort.code(with_code, add_imports=[""import a""])
+        == 'r""""""module docstring\n""""""\n\nimport a\n\nx = 1\n'
+    )
+
+    # Every prefix isort itself recognises, in both quote flavours and in lower,
+    # upper and mixed case.
+    for prefix in sorted(STRING_PREFIXES):
+        for cased in sorted({prefix, prefix.upper(), prefix.capitalize()}):
+            for quote in ('""""""', ""'''""):
+                docstring = f""{cased}{quote}module docstring\n{quote}\n""
+                source = docstring + ""import a\n""
+                assert isort.code(source, add_imports=[""import a""]) == source, cased + quote",https://github.com/PyCQA/isort/issues/1893 https://github.com/PyCQA/isort/pull/2626,,
+python-poetry__tomlkit-366,New element in a table is placed in the wrong place,"Hi, nice work here. Thank you for the project. I have a bug report to file. ```python x = tomlkit.parse(''' [root1.root2] value = 1 [root1.root2.a.b.c] value = 2 [WALRUS] goo = ""gjob"" [root1.root2.x] value = 4 ''') x['root1']['root2']['a'].add('tmp', 'hi') print(tomlkit.dumps(x)) ``` Expected (amongst other formatting possibilities): ```toml [root1.root2] value = 1 [root1.root2.a] tmp = ""hi"" [root1.root2.a.b.c] value = 2 [WALRUS] goo = ""gjob"" [root1.root2.x] value = 4 ``` But the code rather prints: ```toml [root1.root2] value = 1 [root1.root2.a] [root1.root2.a.b.c] value = 2 tmp = ""hi"" [WALRUS] goo = ""gjob"" [root1.root2.x] value = 4 ``` This TOML code places `tmp = ""hi""` under `a.b.c`, not `a` (as the Python code said). Another instance of the bug is: ```python x = tomlkit.parse(''' [root1.root2.a.b.c] value = 2 [WALRUS] goo = ""gjob"" [root1.root2.x] value = 4 ''') x['root1']['root2']['a'].add('tmp', 'hi') print(tomlkit.dumps(x)) ``` (NOTE: the code is almost the same. The only difference is that `[root1.root2]` is gone in the TOML.) In this case, the output does not change with `.add()`, nor even a direct setitem: ``` >>> x['root1']['root2']['a']['tmp'] = 'hi' >>> x['root1']['root2']['a'] {'b': {'c': {'value': 2}}} ``` Maybe the update is happening on some kind of proxy object, which interacts badly with the original object, I don't know. Maybe there's a bug in parsing out-of-order sections, cc. #196 #261?","def test_update_nested_out_of_order_table():
+    doc = parse(""""""\
+[root1.root2.a.b.c]
+  value = 2
+[WALRUS]
+  goo = ""gjob""
+[root1.root2.x]
+  value = 4
+"""""")
+    doc[""root1""][""root2""][""a""].add(""tmp"", ""hi"")
+    assert (
+        doc.as_string()
+        == """"""\
+[root1.root2.a]
+tmp = ""hi""
+[root1.root2.a.b.c]
+  value = 2
+[WALRUS]
+  goo = ""gjob""
+[root1.root2.x]
+  value = 4
+""""""
+    )
+",https://github.com/python-poetry/tomlkit/issues/361 https://github.com/python-poetry/tomlkit/pull/366,,
+python-attrs__attrs-1329,Latest release breaks hypothesis tests in CPython main branch,"See https://github.com/python/cpython/issues/122686. Pinning to ""attrs<=23.2.0"" - a workaround.","from attr._compat import PY_3_14_PLUS
+
+@pytest.mark.xfail(
+    PY_3_14_PLUS, reason=""cloudpickle is currently broken on 3.14.""
+)
+from attr._compat import PY_3_14_PLUS
+        if PY_3_14_PLUS and not slots:
+            pytest.xfail(""References are changing a lot in 3.14."")
+        if PY_3_14_PLUS and not slots:
+            pytest.xfail(""Forward references are changing a lot in 3.14."")
+from attr._compat import PY_3_8_PLUS, PY_3_10_PLUS, PY_3_14_PLUS
+    @pytest.mark.xfail(PY_3_14_PLUS, reason=""Currently broken on nightly."")
+        When subclassing a slotted class and using cached property, there are
+        no stray references to the original class.
+
+from attr._compat import PY_3_8_PLUS, PY_3_14_PLUS, PYPY
+@pytest.mark.xfail(
+    PY_3_14_PLUS, reason=""3.14 returns weird annotation for cached_properies""
+)",https://github.com/python-attrs/attrs/issues/1326 https://github.com/python-attrs/attrs/pull/1329,,
+python-attrs__attrs-1319,`kw_only` with `default` breaks `__attrs_pre_init__` call,"The following code raises SyntaxError ```python from attrs import define, field @define class A: a: int = field(kw_only=True, default=3) def __attrs_pre_init__(self, _): pass ``` ```python Traceback (most recent call last): File ""/home/user/attrs_pre_init.py"", line 4, in <module> @define ^^^^^^ File ""/home/user/.venv/lib/python3.12/site-packages/attr/_next_gen.py"", line 153, in define return wrap(maybe_cls) ^^^^^^^^^^^^^^^ File ""/home/user/.venv/lib/python3.12/site-packages/attr/_next_gen.py"", line 144, in wrap return do_it(cls, True) ^^^^^^^^^^^^^^^^ File ""/home/user/.venv/lib/python3.12/site-packages/attr/_next_gen.py"", line 90, in do_it return attrs( ^^^^^^ File ""/home/user/.venv/lib/python3.12/site-packages/attr/_make.py"", line 1715, in attrs return wrap(maybe_cls) ^^^^^^^^^^^^^^^ File ""/home/user/.venv/lib/python3.12/site-packages/attr/_make.py"", line 1694, in wrap builder.add_init() File ""/home/user/.venv/lib/python3.12/site-packages/attr/_make.py"", line 1090, in add_init _make_init( File ""/home/user/.venv/lib/python3.12/site-packages/attr/_make.py"", line 2181, in _make_init init = _make_method( ^^^^^^^^^^^^^ File ""/home/user/.venv/lib/python3.12/site-packages/attr/_make.py"", line 345, in _make_method _compile_and_eval(script, globs, locs, filename) File ""/home/user/.venv/lib/python3.12/site-packages/attr/_make.py"", line 317, in _compile_and_eval bytecode = compile(script, filename, ""exec"") ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ File ""<attrs generated init __main__.A>"", ...","    @pytest.mark.usefixtures(""with_and_without_validation"")
+    def test_pre_init_kw_only_work_with_defaults(self):
+        """"""
+        Default values together with kw_only don't break __attrs__pre_init__.
+        """"""
+        val = None
+
+        @attr.define
+        class KWOnlyAndDefault:
+            kw_and_default: int = attr.field(kw_only=True, default=3)
+
+            def __attrs_pre_init__(self, *, kw_and_default):
+                nonlocal val
+                val = kw_and_default
+
+        inst = KWOnlyAndDefault()
+
+        assert 3 == val == inst.kw_and_default",https://github.com/python-attrs/attrs/issues/1284 https://github.com/python-attrs/attrs/pull/1319,,
+pallets__click-3470,running tests in parallel with `tox p` fails,"Running tests in parallel with `tox p` fails, meaning I have to run all local test envs serially right now. It seems that the detected terminal environment is different in parallel mode, causing the pager tests to fail. ``` FAILED tests/test_utils.py::test_echo_via_pager[test0-cat] - AssertionError: Unexpected pager output in test case 'Plain string argument' ```","from click._compat import MAC
+@pytest.mark.skipif(
+    MAC and sys.version_info >= (3, 13) and sys._is_gil_enabled(),
+    reason=""Generator exception tests are flaky in Python 3.14t on macOS."",
+)",https://github.com/pallets/click/issues/2899 https://github.com/pallets/click/pull/3470,,
