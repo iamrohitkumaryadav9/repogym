@@ -180,6 +180,7 @@ def mine_repo(
                 issue_title=issue["title"],
                 issue_body=issue.get("body") or "",
                 issue_labels=[label["name"] for label in issue.get("labels", [])],
+                pr_labels=[label["name"] for label in pr.get("labels", [])],
                 link_source=link_source,
                 base_commit=pr["base"]["sha"],
                 gold_patch=split.gold_patch,

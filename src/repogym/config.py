@@ -23,11 +23,16 @@ MAX_CHANGED_LINES = 300
 DEFAULT_WORKERS = 2
 CONTAINER_MEMORY = "2g"
 CONTAINER_CPUS = "2"
-RUN_TIMEOUT_SECONDS = 300
+RUN_TIMEOUT_SECONDS = 300  # whole container; a backstop behind the per-test timeout
+PER_TEST_TIMEOUT_SECONDS = 30
+# A listed test must pass well inside the per-test timeout in every oracle run, so that a
+# slow-but-correct fix on a busier machine is not mistaken for a hang.
+ORACLE_TEST_SECONDS_LIMIT = PER_TEST_TIMEOUT_SECONDS / 3
 DOCKER_BUDGET_BYTES = 10 * 1000**3
 
 PYTHON_IMAGE = "python:3.11.11-slim-bookworm"
 IMAGE_LABEL = "repogym=1"
+BUILDER_NAME = "repogym-builder"
 
 
 @dataclass(frozen=True)
@@ -38,10 +43,17 @@ class RepoSpec:
     source_roots: tuple[str, ...]
     # Submodule URLs as they appear in .gitmodules -> name of the local bare mirror.
     submodule_mirrors: dict[str, str] = field(default_factory=dict)
+    # Extra Debian packages the test suite needs at run time.
+    apt_packages: tuple[str, ...] = ()
 
     @property
     def slug(self) -> str:
         return self.full_name.split("/")[1]
+
+    @property
+    def packages(self) -> tuple[str, ...]:
+        """Top-level import names provided by the source roots."""
+        return tuple(dict.fromkeys(root.rstrip("/").split("/")[-1] for root in self.source_roots))
 
     @property
     def image(self) -> str:
@@ -67,7 +79,13 @@ _SPEC_TESTS = "toml-spec-tests"
 REPOS: dict[str, RepoSpec] = {
     spec.slug: spec
     for spec in (
-        RepoSpec("pallets/click", ("src/click/",)),
+        RepoSpec(
+            "pallets/click",
+            ("src/click/",),
+            # Pager tests spawn `less`; without it one test closes the captured stdout and
+            # every later test in tests/test_utils.py errors during setup.
+            apt_packages=("less",),
+        ),
         RepoSpec("python-attrs/attrs", ("src/attr/", "src/attrs/")),
         RepoSpec("PyCQA/isort", ("isort/",)),
         RepoSpec(

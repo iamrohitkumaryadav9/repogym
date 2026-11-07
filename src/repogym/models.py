@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,7 @@ class Candidate(BaseModel):
     issue_title: str
     issue_body: str
     issue_labels: list[str] = Field(default_factory=list)
+    pr_labels: list[str] = Field(default_factory=list)
     link_source: str
     base_commit: str
     gold_patch: str
@@ -26,6 +28,9 @@ class Candidate(BaseModel):
     source_files: list[str]
     test_files: list[str]
     other_files: list[str] = Field(default_factory=list)
+
+
+TaskType = Literal["bug", "feature", "unknown"]
 
 
 class VerifiedTask(BaseModel):
@@ -41,6 +46,10 @@ class VerifiedTask(BaseModel):
     fail_to_pass: list[str]
     pass_to_pass: list[str]
     docker_image: str
+    task_type: TaskType = "unknown"
+    # False when the tests use new public names that the issue never mentions.
+    spec_clear: bool = True
+    spec_issues: list[str] = Field(default_factory=list)
 
 
 class TestStatus(StrEnum):
@@ -77,6 +86,8 @@ class TestRun(BaseModel):
     tests: dict[str, TestStatus] = Field(default_factory=dict)
     collection_errors: list[str] = Field(default_factory=list)
     duration_seconds: float = 0.0
+    test_seconds: dict[str, float] = Field(default_factory=dict)
+    timed_out: list[str] = Field(default_factory=list)
     detail: str = ""
     pytest_exit_code: int | None = None
 
