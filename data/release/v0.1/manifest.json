@@ -1,0 +1,263 @@
+{
+  "version": "v0.1",
+  "created_at": "2026-11-07T16:09:21+00:00",
+  "task_count": 247,
+  "per_repo": {
+    "PyCQA/isort": 43,
+    "pallets/click": 71,
+    "pylint-dev/astroid": 67,
+    "python-attrs/attrs": 21,
+    "python-poetry/tomlkit": 45
+  },
+  "tasks_file": "tasks.jsonl",
+  "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+  "repogym_commit": "d0d088d694225e2ede0d0298f590997f410ed98d",
+  "docker_images": {
+    "repogym/astroid:base": "sha256:c75d6b78f8d2dc408807bb0db675deac4002c075a2a5bb4c451868ec389e5aa1",
+    "repogym/attrs:base": "sha256:ef8bb388f15050a9f9945ef67214730c32456796adcad96d6e1211ef1b865df9",
+    "repogym/click:base": "sha256:49c31fc3817761a42bca1f7f03198a6a7bd09d0f4e7e12722aec7e90795cdbc0",
+    "repogym/isort:base": "sha256:35a2484b9aff69959407f3d21388bad41f5f463ef07d223eb533271a7b6c30e9",
+    "repogym/tomlkit:base": "sha256:c4632c7bae6dfd77076b4706a78ca49a888242e76994338be39f25f98016923d"
+  },
+  "splits": {
+    "primary": {
+      "field": "split",
+      "method": "per repo, by PR merge date (UTC days, never split): each repo's newest ~20% test, next ~10% dev, rest train",
+      "per_repo_cutoffs": {
+        "PyCQA/isort": {
+          "dev_cutoff_date": "2026-09-27",
+          "test_cutoff_date": "2026-10-21"
+        },
+        "pallets/click": {
+          "dev_cutoff_date": "2026-05-23",
+          "test_cutoff_date": "2026-07-01"
+        },
+        "pylint-dev/astroid": {
+          "dev_cutoff_date": "2026-08-01",
+          "test_cutoff_date": "2026-08-26"
+        },
+        "python-attrs/attrs": {
+          "dev_cutoff_date": "2025-07-28",
+          "test_cutoff_date": "2025-08-04"
+        },
+        "python-poetry/tomlkit": {
+          "dev_cutoff_date": "2026-07-14",
+          "test_cutoff_date": "2026-07-16"
+        }
+      },
+      "counts": {
+        "dev": 25,
+        "test": 48,
+        "train": 174
+      },
+      "per_repo": {
+        "dev": {
+          "PyCQA/isort": 4,
+          "pallets/click": 8,
+          "pylint-dev/astroid": 7,
+          "python-attrs/attrs": 2,
+          "python-poetry/tomlkit": 4
+        },
+        "test": {
+          "PyCQA/isort": 8,
+          "pallets/click": 14,
+          "pylint-dev/astroid": 13,
+          "python-attrs/attrs": 4,
+          "python-poetry/tomlkit": 9
+        },
+        "train": {
+          "PyCQA/isort": 31,
+          "pallets/click": 49,
+          "pylint-dev/astroid": 47,
+          "python-attrs/attrs": 15,
+          "python-poetry/tomlkit": 32
+        }
+      }
+    },
+    "global": {
+      "field": "split_global",
+      "method": "one set of cutoff dates for all repos (UTC days, never split): newest ~20% test, next ~10% dev, rest train; for contamination analysis",
+      "dev_cutoff_date": "2026-07-10",
+      "test_cutoff_date": "2026-08-18",
+      "counts": {
+        "dev": 25,
+        "test": 50,
+        "train": 172
+      },
+      "per_repo": {
+        "dev": {
+          "PyCQA/isort": 4,
+          "pallets/click": 6,
+          "pylint-dev/astroid": 8,
+          "python-attrs/attrs": 1,
+          "python-poetry/tomlkit": 6
+        },
+        "test": {
+          "PyCQA/isort": 23,
+          "pallets/click": 5,
+          "pylint-dev/astroid": 14,
+          "python-poetry/tomlkit": 8
+        },
+        "train": {
+          "PyCQA/isort": 16,
+          "pallets/click": 60,
+          "pylint-dev/astroid": 45,
+          "python-attrs/attrs": 20,
+          "python-poetry/tomlkit": 31
+        }
+      }
+    }
+  },
+  "merged_at_range": [
+    "2023-12-12T13:18:33Z",
+    "2026-11-06T17:50:07Z"
+  ],
+  "upstream_licenses": {
+    "note": "Each task's code, patches and issue text come from its upstream repository and remain under that repository's licence, read at the task's base_commit. The RepoGym code is MIT-licensed.",
+    "per_task_field": "upstream_license",
+    "counts": {
+      "BSD-3-Clause": 71,
+      "LGPL-2.1-or-later": 67,
+      "MIT": 109
+    },
+    "per_repo": {
+      "PyCQA/isort": {
+        "spdx": [
+          "MIT"
+        ],
+        "files": [
+          "LICENSE sha256:063294001c3d523dbacbab9dd54ac229982756ccaf592ca53240b2b0cdd82065"
+        ]
+      },
+      "pallets/click": {
+        "spdx": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          "LICENSE.txt sha256:9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d"
+        ]
+      },
+      "pylint-dev/astroid": {
+        "spdx": [
+          "LGPL-2.1-or-later"
+        ],
+        "files": [
+          "LICENSE sha256:fea16bda9e734dea0d9c8d9f5b909878ef4171626354329609fffcf3db42cb24"
+        ]
+      },
+      "python-attrs/attrs": {
+        "spdx": [
+          "MIT"
+        ],
+        "files": [
+          "LICENSE sha256:882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f"
+        ]
+      },
+      "python-poetry/tomlkit": {
+        "spdx": [
+          "MIT"
+        ],
+        "files": [
+          "LICENSE sha256:f2f9b460ba719da6626add264d3782f275a4ff7aab677beda08b330911e23adb"
+        ]
+      }
+    }
+  },
+  "labels": {
+    "task_type": {
+      "bug": 216,
+      "feature": 22,
+      "other": 5,
+      "unknown": 4
+    },
+    "task_type_source": {
+      "classifier": 158,
+      "github": 55,
+      "human": 30,
+      "unknown": 4
+    },
+    "task_type_by_source": {
+      "classifier": {
+        "bug": 140,
+        "feature": 13,
+        "other": 5
+      },
+      "github": {
+        "bug": 53,
+        "feature": 2
+      },
+      "human": {
+        "bug": 23,
+        "feature": 7
+      },
+      "unknown": {
+        "unknown": 4
+      }
+    },
+    "spec_clear": {
+      "false": 8,
+      "true": 239
+    },
+    "spec_clear_source": {
+      "heuristic": 222,
+      "human": 25
+    }
+  },
+  "commits": {
+    "validation": [
+      "0bb55abf1d6b69ae8a422ea23f389e2d3dacf943"
+    ],
+    "release": "d0d088d694225e2ede0d0298f590997f410ed98d",
+    "validated_data_commit": "58e3371871c40acd3ed5c41a1ad6991a90ea2d30",
+    "validated_data_unchanged_since_that_commit": true,
+    "validated_data_sha256": {
+      "data/tasks_verified.jsonl": "66868ab8d85bdf05809c8e8178bc650ae83ec52e49a729c79f15cf44bf1e8534",
+      "data/rejections.jsonl": "93fa140538d4bf129c268c35ae300489ec3abb4970e4830436a53d8664e43474",
+      "data/baseline_failures.jsonl": "e812239f2e57ec7151c8b0048749147edeb717f364cb523e1f851b2178f62cc3",
+      "data/run_metrics.jsonl": "431d366096a912fc05c19525be9f26207cc5dee938fcd46389a62c9d4d5cb2dd",
+      "data/provenance.jsonl": "69313909cde5040c6e8f680ce693f758622bb10f22acdb157f4ef730822d1840"
+    },
+    "code_changed_since_validation": {
+      "0bb55abf1d6b69ae8a422ea23f389e2d3dacf943": [
+        "src/repogym/calibrate.py",
+        "src/repogym/calibrate_report.py",
+        "src/repogym/classify.py",
+        "src/repogym/cli.py",
+        "src/repogym/config.py",
+        "src/repogym/consensus.py",
+        "src/repogym/env/repos.py",
+        "src/repogym/labels.py",
+        "src/repogym/licenses.py",
+        "src/repogym/llm.py",
+        "src/repogym/mining/miner.py",
+        "src/repogym/models.py",
+        "src/repogym/release.py",
+        "src/repogym/release_build.py",
+        "src/repogym/sheets.py"
+      ]
+    },
+    "validation_code_changed_since_validation": {
+      "0bb55abf1d6b69ae8a422ea23f389e2d3dacf943": [
+        "src/repogym/env/repos.py"
+      ]
+    }
+  },
+  "classifier": {
+    "models": [
+      "gemini-3.5-flash-lite"
+    ],
+    "prompt_version": "task-type-v1",
+    "temperature": 0,
+    "rule": "3 independent runs; label applied only if all agree and every confidence >= 0.9",
+    "tasks_without_github_label": 174,
+    "outcomes": {
+      "applied": 170,
+      "disagreement": 3,
+      "low_confidence": 1
+    }
+  },
+  "precedence": {
+    "task_type": "human > github > classifier > unknown",
+    "spec_clear": "human (adjudicated) > heuristic"
+  }
+}
