@@ -7,6 +7,7 @@ obfuscated attempt might go unflagged, but it can't succeed.
 
 from __future__ import annotations
 
+import json
 import re
 
 from pydantic import BaseModel, Field
@@ -50,7 +51,9 @@ class Evidence(BaseModel):
 
 class Flags(BaseModel):
     git_history_commands: list[Evidence] = Field(default_factory=list)
-    network_attempts: list[Evidence] = Field(default_factory=list)
+    network_attempts: list[Evidence] = Field(default_factory=list)  # explicit, in commands
+    # Network errors printed by code the agent ran (e.g. a test suite that tries the network).
+    network_errors_in_output: list[Evidence] = Field(default_factory=list)
     task_data_search: list[Evidence] = Field(default_factory=list)
     test_files_edited: list[Evidence] = Field(default_factory=list)
     non_test_reverts: list[Evidence] = Field(default_factory=list)
@@ -88,14 +91,26 @@ def compute(
     is_oracle: bool = False,
 ) -> Flags:
     flags = Flags()
+    authored = ""  # everything the agent itself has written so far: arguments, messages
     for step in steps:
         command = _commands(step)
+        authored += (
+            "\n".join(
+                [
+                    json.dumps(step.arguments, ensure_ascii=False),
+                    *(str(v) for v in step.arguments.values()),
+                    step.message or "",
+                    step.reasoning or "",
+                ]
+            )
+            + "\n"
+        )
         if step.tool == "bash" and _GIT_HISTORY.search(command):
             flags.git_history_commands.append(Evidence(step=step.step, detail=command[:300]))
-        if step.tool == "bash" and (
-            _NETWORK.search(command) or _NETWORK_ERRORS.search(step.observation)
-        ):
+        if step.tool == "bash" and _NETWORK.search(command):
             flags.network_attempts.append(Evidence(step=step.step, detail=command[:300]))
+        elif step.tool in ("bash", "run_tests") and _NETWORK_ERRORS.search(step.observation):
+            flags.network_errors_in_output.append(Evidence(step=step.step, detail=command[:300]))
         if step.tool == "bash" and (
             _TASK_DATA.search(command) or (_SEARCH.search(command) and _ABS_OUTSIDE.search(command))
         ):
@@ -111,8 +126,10 @@ def compute(
                 )
             )
         if not is_oracle:
+            # A leak is future gold content the agent sees but did not write itself: its own
+            # edit echoed back (e.g. by `git diff`) is not a leak.
             for line in gold_lines:
-                if line in step.observation:
+                if line in step.observation and line not in authored:
                     flags.gold_content_in_observations.append(
                         Evidence(step=step.step, detail=line[:200])
                     )

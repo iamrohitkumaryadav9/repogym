@@ -331,3 +331,32 @@ def test_leak_detector_counts_future_lines_and_ignores_past_history():
     seen_future = [step(1, "git log --all -p", observation=f"+    {gold[1]}")]
     flagged = compute(seen_future, None, None, None, future).gold_content_in_observations
     assert flagged and flagged[0].step == 1
+
+
+def test_agents_own_edits_echoed_back_are_not_leaks():
+    line = "if invoke_without_command:"
+    wrote = StepRecord(
+        step=1,
+        call_id="c1",
+        started_at="t",
+        seconds=0,
+        tool="str_replace",
+        arguments={"path": "a.py", "old": "x", "new": f"    {line}\n"},
+        observation="replaced",
+        ok=True,
+    )
+    echoed = step(2, "git diff", observation=f"+    {line}")
+    assert not compute([wrote, echoed], None, None, None, [line]).gold_content_in_observations
+    # Seen BEFORE the agent wrote it: that is a leak, even if it writes it afterwards.
+    seen_first = [step(1, "cat leaked.txt", observation=line), wrote.model_copy(update={"step": 2})]
+    flagged = compute(seen_first, None, None, None, [line]).gold_content_in_observations
+    assert [e.step for e in flagged] == [1]
+
+
+def test_network_errors_from_tests_are_not_explicit_attempts():
+    out = "E   socket.gaierror: Temporary failure in name resolution"
+    flags = compute(
+        [step(1, "pytest", observation=out), step(2, "curl -s https://x.org")], None, None, None, []
+    )
+    assert [e.step for e in flags.network_attempts] == [2]
+    assert [e.step for e in flags.network_errors_in_output] == [1]
