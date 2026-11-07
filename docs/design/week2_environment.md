@@ -473,3 +473,10 @@ past commit also added are legitimate context. Each episode records them separat
 `past_gold_lines_observed`, which is informational and not a flag. The first clean dev run
 showed why this matters: on `pallets__click-3582`, the Cheater's `git log --all -p` showed
 `.. versionchanged:: 8.4.2`, a line that a past commit had also added.
+
+**Environment bugs found by the all-247 Oracle run.** Grading passed pytest every touched test
+path, while validation passes only runnable test files (`is_runnable_test_file`). For two attrs
+tasks, `tests/test_mypy.yml` was handed to pytest, the run aborted with a usage error (exit 4),
+and the Oracle scored 0. Six more tasks ran extra helper or data `.py` files that validation
+never ran. Grading now uses validation's own selection (`runnable_test_files`), and a
+regression test covers it. All evidence runs were restarted from scratch after the fix.
