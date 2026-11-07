@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>RepoGym runs</title>
+<style>
+:root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e2e1dc; --card:#fff;
+        --ok:#1f7a4d; --bad:#b3261e; --warn:#8a5a00; --code:#f3f2ee; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#e8e7e3; --muted:#9a9993;
+        --line:#2e2e2b; --card:#1e1e1c; --ok:#5fc48f; --bad:#f08b83; --warn:#e0b25c; --code:#232321; } }
+* { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--fg);
+  font:14px/1.45 system-ui, sans-serif } header { padding:14px 20px; border-bottom:1px solid var(--line) }
+main { display:grid; grid-template-columns:320px 1fr; min-height:calc(100vh - 50px) }
+nav { border-right:1px solid var(--line); overflow:auto; max-height:calc(100vh - 50px) }
+nav .item { padding:8px 14px; border-bottom:1px solid var(--line); cursor:pointer }
+nav .item:hover, nav .item.on { background:var(--code) } .muted { color:var(--muted) }
+section { padding:16px 22px; overflow:auto; max-height:calc(100vh - 50px) }
+.badge { display:inline-block; padding:1px 7px; border-radius:9px; font-size:12px; border:1px solid var(--line) }
+.r1 { color:var(--ok); border-color:var(--ok) } .r0 { color:var(--bad); border-color:var(--bad) }
+.flag { color:var(--warn); border-color:var(--warn); margin:2px } pre { background:var(--code);
+  padding:10px; border-radius:6px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:6px 0 }
+.step { border:1px solid var(--line); background:var(--card); border-radius:8px; padding:10px 12px; margin:10px 0 }
+.controls button { margin-right:6px } .add { color:var(--ok) } .del { color:var(--bad) }
+@media (max-width: 760px) { main { grid-template-columns:1fr } nav { max-height:40vh } }
+</style></head><body>
+<header><b>RepoGym</b> <span class="muted">runs and trajectories</span></header>
+<main><nav id="nav"></nav><section id="view"><p class="muted">Pick a run.</p></section></main>
+<script>
+const $ = (tag, attrs={}, ...kids) => { const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)) k === "class" ? e.className = v : e.setAttribute(k, v);
+  for (const kid of kids) e.append(kid instanceof Node ? kid : document.createTextNode(String(kid ?? "")));
+  return e; };
+const nav = document.getElementById("nav"), view = document.getElementById("view");
+const badge = r => $("span", {class: "badge " + (r === 1 ? "r1" : r === 0 ? "r0" : "")},
+  r === null || r === undefined ? "n/a" : "reward " + r);
+function diffPre(text) { const pre = $("pre");
+  for (const line of text.split("\n")) pre.append($("span", {class: line.startsWith("+") &&
+    !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : ""},
+    line + "\n")); return pre; }
+async function runs() { const data = await (await fetch("/api/runs")).json(); nav.replaceChildren();
+  for (const r of data) { const it = $("div", {class: "item"}, $("b", {}, r.run_id), $("br"),
+      $("span", {class: "muted"}, `${r.agent} · ${r.solved}/${r.graded} solved · ${r.episodes} episodes`));
+    it.onclick = () => run(r.run_id); nav.append(it); } }
+async function run(id) { const eps = await (await fetch("/api/run/" + id)).json(); nav.replaceChildren(
+    $("div", {class: "item"}, "← all runs")); nav.firstChild.onclick = runs;
+  for (const e of eps) { const it = $("div", {class: "item"}, $("b", {}, e.task_id), " ", badge(e.reward),
+      $("br"), $("span", {class: "muted"}, `${e.status} · ${e.steps} steps · ${(e.flags_raised||[]).join(", ") || "no flags"}`));
+    it.onclick = () => { [...nav.children].forEach(c => c.classList.remove("on")); it.classList.add("on");
+      episode(id, e.task_id); }; nav.append(it); } }
+async function episode(run, task) { const d = await (await fetch(`/api/episode/${run}/${task}`)).json();
+  const rec = d.record, g = rec.grade || {}; view.replaceChildren();
+  view.append($("h2", {}, task, " ", badge(rec.reward)), $("p", {class: "muted"},
+    `${rec.agent} ${rec.agent_version}${rec.model_name ? " · " + rec.model_name : ""} · ${rec.status} · ` +
+    `done: ${rec.done_reason} · setup ${rec.setup_seconds}s · FAIL_TO_PASS ${g.fail_to_pass_passed ?? "-"}/` +
+    `${g.fail_to_pass_total ?? "-"} · PASS_TO_PASS regressions ${(g.pass_to_pass_failed||[]).length}`));
+  const flags = $("div"); for (const name of rec.flags_raised || []) flags.append($("span", {class: "badge flag"},
+    `${name} (${rec.flags[name].length})`)); view.append(flags);
+  if (rec.error) view.append($("pre", {}, rec.error));
+  for (const [name, ev] of Object.entries(rec.flags || {})) if (ev.length) view.append(
+    $("details", {}, $("summary", {}, name), $("pre", {}, ev.map(e => (e.step ? "step " + e.step + ": " : "") + e.detail).join("\n"))));
+  if (d.diff) view.append($("details", {}, $("summary", {}, "agent diff (before reverts)"), diffPre(d.diff)));
+  if (!d.trajectory) return; const steps = d.trajectory.steps; let i = 0;
+  const box = $("div"), counter = $("span", {class: "muted"});
+  const prev = $("button", {}, "◀ prev"), next = $("button", {}, "next ▶"), all = $("button", {}, "show all");
+  const show = (from, to) => { box.replaceChildren(); for (const s of steps.slice(from, to)) box.append(stepView(s));
+    counter.textContent = to - from === 1 ? ` step ${from + 1} of ${steps.length}` : ` all ${steps.length} steps`; };
+  prev.onclick = () => { i = Math.max(0, i - 1); show(i, i + 1); };
+  next.onclick = () => { i = Math.min(steps.length - 1, i + 1); show(i, i + 1); };
+  all.onclick = () => show(0, steps.length);
+  view.append($("div", {class: "controls"}, prev, next, all, counter), box); show(0, 1); }
+function stepView(s) { const el = $("div", {class: "step"}, $("b", {}, `#${s.step_id} ${s.source}`),
+    " ", $("span", {class: "muted"}, s.timestamp || ""));
+  if (s.message) el.append($("pre", {}, typeof s.message === "string" ? s.message : JSON.stringify(s.message)));
+  for (const c of s.tool_calls || []) { const a = c.arguments || {};
+    el.append($("div", {}, $("b", {}, c.function_name)));
+    if (c.function_name === "str_replace") el.append($("div", {class: "muted"}, a.path),
+      diffPre(a.old.split("\n").map(l => "-" + l).concat(a.new.split("\n").map(l => "+" + l)).join("\n")));
+    else if (c.function_name === "create_file") el.append($("div", {class: "muted"}, a.path),
+      diffPre(a.content.split("\n").map(l => "+" + l).join("\n")));
+    else el.append($("pre", {}, a.command ?? a.target ?? JSON.stringify(a))); }
+  for (const r of (s.observation || {}).results || []) el.append($("div", {class: "muted"}, "observation"),
+    $("pre", {}, typeof r.content === "string" ? r.content : JSON.stringify(r.content)));
+  if (s.metrics) el.append($("div", {class: "muted"}, `tokens: ${s.metrics.prompt_tokens ?? "?"} in, ${s.metrics.completion_tokens ?? "?"} out`));
+  return el; }
+runs();
+</script></body></html>

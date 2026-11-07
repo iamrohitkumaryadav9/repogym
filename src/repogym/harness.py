@@ -203,6 +203,9 @@ def run_episode(
     errors = trajectory.validate(doc)
     if errors:
         raise ValueError(f"ATIF validation failed for {task.task_id}: {errors[:5]}")
+    diff_path = run_dir / "diffs" / f"{task.task_id}.diff"
+    diff_path.parent.mkdir(parents=True, exist_ok=True)
+    diff_path.write_text(work.diff, encoding="utf-8", errors="surrogateescape")
     path = run_dir / "trajectories" / f"{task.task_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=1, ensure_ascii=False))
