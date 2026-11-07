@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -249,43 +250,84 @@ def clean(
         typer.echo(f"repogym-builder cache: {prune_build_cache()}")
 
 
-@app.command()
-def classify(
-    task: Annotated[list[str] | None, typer.Option(help="Only these tasks; repeatable.")] = None,
-    interval: Annotated[float, typer.Option(help="Seconds between API requests.")] = 5.0,
-) -> None:
-    """Label verified tasks with the LLM classifier. Writes data/task_type_labels.jsonl only."""
-    from collections import Counter
-
-    from repogym.classify import classify as classify_task
-    from repogym.config import TASK_TYPE_LABELS_PATH
+def _llm_client(interval: float, model: str | None = None):
     from repogym.llm import GeminiClient, MissingSettings, Settings
-    from repogym.models import Candidate, VerifiedTask
-    from repogym.validate import read_jsonl
 
     try:
         settings = Settings.from_env()
     except MissingSettings as exc:
         typer.echo(f"{exc}. Add them to .env and rerun.")
         raise typer.Exit(1) from exc
+    if model:  # a comparison run: that model only, no fallback
+        settings = Settings(api_key=settings.api_key, model=model, fallback_model=model)
+    return GeminiClient(settings, interval=interval)
+
+
+@app.command()
+def classify(
+    task: Annotated[list[str] | None, typer.Option(help="Only these tasks; repeatable.")] = None,
+    interval: Annotated[float, typer.Option(help="Seconds between API requests.")] = 5.0,
+    model: Annotated[
+        str | None, typer.Option(help="Comparison run with this model only (no fallback).")
+    ] = None,
+    out: Annotated[Path | None, typer.Option(help="Labels file (default: official).")] = None,
+    refresh: Annotated[
+        bool, typer.Option(help="Ignore cached answers; ask the API again.")
+    ] = False,
+) -> None:
+    """Label verified tasks with the LLM classifier. Writes the labels file only.
+
+    Labels for the given tasks replace earlier ones; labels for other tasks are kept.
+    """
+    from collections import Counter
+
+    from repogym.classify import TaskTypeLabel
+    from repogym.classify import classify as classify_task
+    from repogym.config import TASK_TYPE_LABELS_PATH
+    from repogym.models import Candidate, VerifiedTask
+    from repogym.validate import read_jsonl
+
+    path = out or TASK_TYPE_LABELS_PATH
+    client = _llm_client(interval, model)
     candidates = {c.task_id: c for c in read_jsonl(CANDIDATES_PATH, Candidate)}
     ids = task or [t.task_id for t in read_jsonl(VERIFIED_PATH, VerifiedTask)]
-    client = GeminiClient(settings, interval=interval)
-    labels = []
+    labels = {label.task_id: label for label in read_jsonl(path, TaskTypeLabel)}
+    new = []
     try:
         for index, task_id in enumerate(ids, start=1):
-            labels.append(classify_task(candidates[task_id], client))
+            new.append(classify_task(candidates[task_id], client, refresh=refresh))
             if index % 25 == 0:
                 typer.echo(f"{index}/{len(ids)} labelled, {client.requests} API requests")
     finally:
         client.close()
-    temp = TASK_TYPE_LABELS_PATH.with_suffix(".tmp")
-    temp.write_text("".join(label.model_dump_json() + "\n" for label in labels), encoding="utf-8")
-    temp.replace(TASK_TYPE_LABELS_PATH)
-    for (model, task_type), count in sorted(Counter((x.model, x.task_type) for x in labels).items(),
-                                            key=str):  # fmt: skip
-        typer.echo(f"{count:5d}  {task_type:8} via {model}")
-    typer.echo(f"{client.requests} API requests; labels in {TASK_TYPE_LABELS_PATH}")
+        labels.update({label.task_id: label for label in new})
+        temp = path.with_suffix(".tmp")
+        temp.write_text("".join(labels[t].model_dump_json() + "\n" for t in sorted(labels)),
+                        encoding="utf-8")  # fmt: skip
+        temp.replace(path)
+    for (m, task_type), count in sorted(Counter((x.model, x.task_type) for x in new).items(),
+                                        key=str):  # fmt: skip
+        typer.echo(f"{count:5d}  {task_type:8} via {m}")
+    typer.echo(f"{client.requests} API requests; {len(new)} labels written to {path}")
+
+
+@app.command("llm-audit")
+def llm_audit(
+    delete_bad: Annotated[bool, typer.Option(help="Delete entries that fail the audit.")] = False,
+) -> None:
+    """Check every cached LLM answer is complete, schema-valid JSON (finishReason STOP)."""
+    from repogym.classify import parse_label
+
+    client = _llm_client(interval=0)
+    total, problems = client.audit_cache(parse_label)
+    client.close()
+    typer.echo(f"{total} cache entries, {len(problems)} bad")
+    for problem in problems:
+        typer.echo(f"  {problem.path.name}  {problem.model}  {problem.problem}")
+        if delete_bad:
+            problem.path.unlink()
+    if problems and delete_bad:
+        typer.echo("Deleted. Rerun classify for the affected tasks.")
 
 
 @app.command()
