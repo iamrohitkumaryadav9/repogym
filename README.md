@@ -1,23 +1,154 @@
 # RepoGym
 
-An RL environment and evaluation harness for coding agents, built from real GitHub data.
+[![tests](https://github.com/iamrohitkumaryadav9/repogym/actions/workflows/tests.yml/badge.svg)](https://github.com/iamrohitkumaryadav9/repogym/actions/workflows/tests.yml)
 
-## Week 1: Task mining and validation
+An RL environment and evaluation harness for coding agents, built from real GitHub pull requests.
+Each task is an issue, a repository at the commit before the fix, and hidden tests that check
+whether a patch fixes it. Every task is validated in Docker by three checks before it ships.
 
-The Week 1 pipeline turns merged GitHub pull requests into verified tasks. Each task is an issue, a
-repository at the commit before the fix, and tests that prove whether a patch fixes it.
+## Results (dataset v0.1)
 
+| | |
+|---|---|
+| **Verified tasks** | **247** from 5 repos (click 71, astroid 67, tomlkit 45, isort 43, attrs 21) |
+| **Funnel** | 1,794 merged PRs (3 years) → 271 candidates → 247 verified. **91.1%** of candidates survive validation |
+| **Rejections (24)** | 19 nothing fails without the fix · 3 no runnable test file · 2 the fix doesn't make the tests pass |
+| **FAIL_TO_PASS tests per task** | 1 test: 129 · 2–5: 88 · 6+: 30. Median diff 45 lines, median test run 1.75 s |
+| **task_type** | *pending: consensus labelling is still running* |
+| **task_type sources** | *pending* · human (30) > github > classifier > unknown |
+| **Task-type classifier vs human labels** | accuracy 0.90, **Cohen's κ 0.75** (n = 30) |
+| **Task-type classifier vs GitHub labels** | accuracy 0.97, **κ 0.88** (n = 73) |
+| **Classifier run-to-run stability** | *pending* (3 runs per task, temperature 0) |
+| **Spec check vs human labels, blind** | precision 0.67 · recall 0.75 · **F1 0.71** (n = 25) |
+| **Spec check, adjudicated** | precision 0.67 · recall 0.75 · **F1 0.71**. 3 false positives adjudicated; human labels upheld in all 3 |
+| **spec_clear in the release** | 239 clear, 8 unclear. Source: 25 human, 222 heuristic |
+| **Splits (by merge date)** | train 172 (before 2026-07-10) · dev 25 (2026-07-10 to 2026-08-17) · test 50 (on or after 2026-08-18) |
+| **Docker disk (RepoGym only)** | 2.73 GB for 5 base images plus build cache (budget 10 GB) |
+
+Per-repo counts per split:
+
+| Split | click | astroid | tomlkit | isort | attrs | Total |
+|---|---|---|---|---|---|---|
+| train | 60 | 45 | 31 | 16 | 20 | 172 |
+| dev | 6 | 8 | 6 | 4 | 1 | 25 |
+| test | 5 | 14 | 8 | 23 | 0 | 50 |
+
+Validation and labelling details: [validity checks](#the-three-validity-checks),
+[task type and spec clarity](#task-type-and-specification-clarity),
+[classifier](#llm-task-type-classifier) and [release](#releases).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    GH[(GitHub REST API)] --> M["<b>mine</b><br/>merged PRs that close an issue<br/>split into gold_patch / test_patch"]
+    M --> C[(tasks_candidates.jsonl)]
+    C --> E["<b>build</b><br/>one base image per repo<br/>+ read-only bare clones"]
+    E --> V["<b>validate</b> (Docker, --network none, 2 GB)<br/>baseline · unsolved · oracle ×3 · no-op<br/>per-test timeout · OOM rule · provenance"]
+    V --> VT[(tasks_verified.jsonl<br/>rejections.jsonl<br/>provenance.jsonl)]
+    VT --> L["<b>labelling</b><br/>task_type: GitHub labels, then<br/>Gemini 3-run consensus<br/>spec_clear: AST name check"]
+    H[/blind human sheets/] --> K
+    L --> K["<b>calibrate</b><br/>κ, accuracy, P/R/F1<br/>adjudication"]
+    K --> R["<b>release</b><br/>time-based splits<br/>manifest + sha256 + image digests"]
+    R --> D[(data/release/v0.1/)]
 ```
-repogym mine      ->  data/tasks_candidates.jsonl   (GitHub REST API, cached)
-repogym build     ->  repogym/<repo>:base images + bare clones under data/repos/
-repogym validate  ->  data/tasks_verified.jsonl and data/rejections.jsonl
-repogym stats     ->  counts, rejection reasons, medians, Docker disk usage
-repogym clean     ->  remove repogym's stopped containers and unused images
+
+## Reproduce
+
+Requires Docker, [uv](https://docs.astral.sh/uv/), a GitHub token with public read access, and a
+Gemini API key for the labelling stage. Put them in `.env`, which is gitignored:
+
+```bash
+GITHUB_TOKEN=...
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-3.5-flash-lite
+GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
 ```
 
-Repositories: pallets/click, pylint-dev/astroid, PyCQA/isort, python-poetry/tomlkit and
-python-attrs/attrs. All are pure Python with fast pytest suites. marshmallow-code/marshmallow is
-configured as a reserve but not mined.
+One command per stage. `make reproduce` runs them all in order:
+
+```bash
+uv sync --locked                          # make install
+uv run pytest                             # make test: unit tests, no network or Docker
+uv run repogym mine                       # make mine: ~35 min uncached, ~3,100 GitHub API requests
+uv run repogym build                      # make build: bare clones + 5 base images, ~4 min
+uv run repogym validate --workers 2       # make validate: ~75 min for 271 candidates
+uv run repogym stats                      # make stats
+uv run repogym classify-consensus         # make label: ~520 Gemini requests; resumable
+uv run repogym calibrate                  # make calibrate: vs data/labelling/ human labels
+uv run repogym release v0.1 --dry-run     # make release-dry: build + validate in a temp dir
+```
+
+Every stage is cached or resumable. Mining caches every API response. Validation and labelling
+fsync each result as it finishes, and a rerun skips completed work. The human labels used for
+calibration are committed in `data/labelling/`. Their definitions are in
+[docs/labelling_guidelines.md](docs/labelling_guidelines.md).
+
+## Design decisions & limitations
+
+**Time-based splits and contamination.** Every task is a public PR, so a model trained on data
+collected after a task's merge date may have seen the issue, the discussion and the fix. That would
+inflate its score without measuring the skill the task is meant to test. Splits are therefore by
+merge date, not random. Tasks are grouped by UTC merge date, and a date is never split. The newest
+~20% are `test`, the next ~10% `dev`, the rest `train`. A model tuned on `train`/`dev` is always
+evaluated on fixes merged later. The `test` split is the most contamination-resistant part, but it
+is not contamination-free. Each task records `merged_at`. When we evaluate agents, we will also
+report results separately on tasks merged after each model's published training cutoff, where one
+is known. The split is uneven across repos: isort is very active in late 2026 (23 of the 50 test
+tasks), and attrs has no test tasks.
+
+**One classifier model, chosen because of rate limits.** The first calibration run used
+`gemini-3.8-flash` as the primary. It hit 309 HTTP 429 responses on 85 tasks, consistent with
+free-tier limits, and 79 labels fell back to `gemini-3.5-flash-lite` anyway. To keep every label
+from one model, `gemini-3.5-flash-lite` is the only model used for dataset labels. `gemini-3.8-flash`
+is kept for an optional comparison run (`--model`), and its earlier answers stay cached under their
+own key.
+
+**Temperature 0 is not deterministic, hence 3-run consensus.** Re-requesting the 79 calibration
+labels at temperature 0 changed 2 labels, 10 confidences and nearly every rationale. So a single
+answer is not trusted. Each unlabelled task gets 3 independent runs, each cached under its own run
+index. A label is applied only if all 3 agree and every confidence is ≥ 0.9; anything else stays
+`unknown`. Answers that are incomplete (no candidates, empty text, or a `finishReason` other than
+STOP) or schema-invalid are failures. They are never cached and never turned into a guessed label.
+Precedence is human > GitHub labels > classifier, and every task records its `task_type_source`.
+
+**The spec check has two known limitations.** It flags tasks whose tests use a new public name
+(an import, attribute, keyword or CLI option) that the fix introduces and the issue never mentions.
+
+1. *It is stricter than human judgement on some new names.* It flagged `isort-2626`
+   (`STRING_PREFIXES`), `attrs-1255` (`PY_3_13_PLUS`) and `attrs-1457` (`force_kw_only`). On
+   adjudication, a human upheld "clear" for all three; the reasons are in
+   `data/labelling/spec_adjudication.csv`.
+2. *It detects new names, not behavioural underspecification.* It missed `click-3695` (the tests
+   expect deprecation warnings) and `attrs-1221` (the tests also require `super()` access).
+
+The check is unchanged. Where a human label exists it is used (`spec_clear_source = "human"`).
+Planned work: tell test-helper and internal imports apart from public-API names, and add an
+LLM-assisted judge for behavioural underspecification.
+
+**Timeouts and out-of-memory.** Each test gets 30 s (`pytest-timeout`). A test that hits it counts
+as FAILED, so a bug that hangs gives a normal failing test. Each container gets 300 s, as a
+backstop. Every listed test must finish in under 10 s in all three oracle runs, so a slow but
+correct fix can't fail on a busier machine. Containers have 2 GiB of memory. If the unsolved or
+no-op run is OOM-killed, the test that was running counts as FAILED, but only if all three oracle
+runs peak below 50% of the limit. Otherwise the task is rejected, because the test may simply be
+too heavy for the container. An OOM in the baseline or oracle runs is never excused. One task,
+`astroid-2596`, is verified under this rule: it peaks at 2 GiB without the fix and 68 MiB with it.
+
+**One image per repo, not per commit.** This keeps disk under 3 GB. Test dependencies are pinned
+per repo and installed offline, and the repo's code comes from a read-only bare clone at
+`base_commit`. Old commits whose tests need different dependency versions fail validation rather
+than getting a custom image. Tests that fail at the base commit are excluded from both test lists
+and logged.
+
+**Other limitations.** Five pure-Python repos with fast test suites; no compiled extensions and no
+other languages. FAIL_TO_PASS size is reported, not filtered: 129 tasks have a single
+FAIL_TO_PASS test, which gives a sparser reward signal. The classifier calibration labels came
+from a single run, so their κ predates the 3-run rule.
+
+---
+
+## Details
 
 ### Mining
 
@@ -143,61 +274,17 @@ config), the repogym git commit and whether the code had uncommitted changes, th
 the container, and the UTC time. The provenance is written before the result, so a recorded result
 always has provenance.
 
-### WSL2 setup
-
-* Keep the project in the Linux filesystem (`~/repogym`), not `/mnt/c`. Bind mounts and git are much
-  faster there, and line endings stay LF.
-* Turn on Docker Desktop's WSL integration for the distro. If `docker` reports permission denied
-  right after doing so, open a new WSL session, because group membership only takes effect at login.
-* `core.autocrlf=input` and `.gitattributes` (`eol=lf`) keep patches applying cleanly.
-* With about 7.7 GB of RAM available to WSL, the default is 2 workers × 2 GB per container.
-  `--workers` changes it.
-
-### Reproduce
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh      # once
-uv sync
-echo 'GITHUB_TOKEN=...' > .env                        # a token with public read-only access
-uv run repogym mine                                   # ~35 min uncached, ~3,100 API requests
-uv run repogym build                                  # bare clones + 5 base images, ~4 min
-uv run repogym validate --workers 2                   # ~75 min for 271 candidates
-uv run repogym stats
-uv run pytest                                         # unit tests, no network
-```
-
-### Week 1 results
-
-| Repo | Merged PRs (3 yrs) | Candidates | Verified | bug | feature | unknown | spec unclear |
-|---|---|---|---|---|---|---|---|
-| pallets/click | 349 | 75 | 71 | 0 | 0 | 71 | 2 |
-| pylint-dev/astroid | 765 | 73 | 66 | 51 | 4 | 11 | 1 |
-| python-poetry/tomlkit | 205 | 49 | 45 | 1 | 0 | 44 | 1 |
-| PyCQA/isort | 275 | 49 | 43 | 4 | 0 | 39 | 2 |
-| python-attrs/attrs | 200 | 25 | 21 | 6 | 6 | 9 | 3 |
-| **Total** | **1,794** | **271** | **246** | **62** | **10** | **174** | **9** |
-
-Rejections (25): 19 where nothing fails without the fix, 3 with no runnable test file, 2 where the
-fix doesn't make the tests pass, and 1 out-of-memory. FAIL_TO_PASS size: 129 tasks have exactly
-1 test, 87 have 2–5, and 30 have 6 or more. The median verified task changes 45 lines, and its
-touched tests run in 1.8 seconds. RepoGym-only Docker disk is 2.73 GB.
-
-The per-test timeout recovered 3 of the 4 tasks earlier rejected for a container timeout or
-running out of memory (`click-2775`, `click-2934`, `tomlkit-509`). In each, the bug made a test hang
-without the fix, and their oracle runs take under 2 seconds. `astroid-2596` still runs out of
-memory without the fix: memory blows up faster than the 30-second limit, so the 2 GB cgroup kills
-pytest first.
-
 ### Task type and specification clarity
 
 Every verified task carries three extra fields, set by `validate` and recomputed by
 `repogym annotate`:
 
-* **`task_type`**: `"bug"`, `"feature"` or `"unknown"`, from the PR and issue labels (for example
-  *Bug*, *Crash*, *Regression* versus *Feature*, *Enhancement*). No labels, or labels pointing both
-  ways, give `"unknown"`. For those, `repogym classify` runs an LLM classifier (below). Its labels
-  are kept in `data/task_type_labels.jsonl` and are **not applied** until they have been calibrated
-  against human labels.
+* **`task_type`**: `"bug"` or `"feature"` from the PR and issue labels (for example *Bug*,
+  *Crash*, *Regression* versus *Feature*, *Enhancement*). No labels, or labels pointing both ways,
+  give `"unknown"`. For those tasks, the LLM classifier (below) runs 3 times. Its label is applied
+  in a release only on a confident consensus, and it can also be `"other"`. A human label from
+  `data/labelling/` takes precedence over both. The release records which source each label came
+  from in `task_type_source`.
 * **`spec_clear`** and **`spec_issues`**: whether the issue tells an agent enough to pass the tests.
   The check (`repogym/spec.py`) parses the patched test files and collects what the *added* lines
   use from the library: names imported from the package, attributes, keyword arguments and
@@ -291,24 +378,29 @@ After they are filled in, `repogym calibrate` reports the classifier's accuracy 
 against the human labels and against GitHub labels, per model, and the spec check's precision and
 recall against the human labels.
 
-### Releases, time-based splits and contamination
+### Releases
 
 `repogym release v0.1` freezes the verified tasks into `data/release/v0.1/`:
 
-* `tasks.jsonl`: each task with its `split`, PR `merged_at` and `created_at`, and PR and issue URLs.
-* `manifest.json`: task count, per-repo counts, the SHA-256 of `tasks.jsonl`, the image ids, the
-  repogym commit, the creation date and the split cutoffs and counts.
+* `tasks.jsonl`: each task with its `split`, PR `merged_at` and `created_at`, PR and issue URLs,
+  `task_type` and `task_type_source`, and `spec_clear` and `spec_clear_source`. It also keeps the
+  heuristic's own verdict (`spec_check_clear`, `spec_issues`).
+* `manifest.json`: task count, per-repo counts, the SHA-256 of `tasks.jsonl`, the image digests,
+  the repogym commit, the creation date, the split cutoff dates with per-repo counts per split,
+  label-source counts, and the classifier model, prompt version and consensus rule.
 
-A release directory is never overwritten.
+A release refuses to overwrite an existing directory, and refuses to run while code or label
+inputs have uncommitted changes. After writing, it re-reads the release and checks it against the
+manifest: the hash, counts, image digests, split dates and label sources. `--dry-run` builds and
+checks everything in a temporary directory and writes nothing to `data/release/`.
 
-**Splits are by time, not at random.** Tasks are sorted by PR merge time. The newest 20% are
-`test`, the next 10% are `dev`, and the rest are `train`. A model tuned on `train`/`dev` is
-therefore always evaluated on fixes merged after everything it was tuned on.
+### WSL2 notes
 
-**Contamination.** Every task is a public pull request, so any model whose training data was
-collected after a task's merge date may have seen the issue, the discussion and the fix itself.
-That would inflate its score without measuring the skill the task is meant to test. The time-based
-`test` split is the most contamination-resistant part of the dataset, because it holds the most
-recent fixes. Each task records its `merged_at`. When we evaluate agents, we will also report
-results separately on tasks merged after each model's published training cutoff, where one is known.
-Those are the only results not exposed to this kind of leakage.
+* Keep the project in the Linux filesystem (`~/repogym`), not `/mnt/c`. Bind mounts and git are much
+  faster there, and line endings stay LF.
+* Turn on Docker Desktop's WSL integration for the distro. If `docker` reports permission denied
+  right after doing so, open a new WSL session, because group membership only takes effect at login.
+* `core.autocrlf=input` and `.gitattributes` (`eol=lf`) keep patches applying cleanly.
+* With about 7.7 GB of RAM available to WSL, the default is 2 workers × 2 GB per container.
+  `--workers` changes it.
+
