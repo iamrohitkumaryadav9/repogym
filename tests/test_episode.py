@@ -360,3 +360,15 @@ def test_network_errors_from_tests_are_not_explicit_attempts():
     )
     assert [e.step for e in flags.network_attempts] == [2]
     assert [e.step for e in flags.network_errors_in_output] == [1]
+
+
+def test_grading_runs_exactly_the_test_files_validation_ran(tmp_path, monkeypatch):
+    import repogym.harness as h
+
+    candidates = tmp_path / "c.jsonl"
+    candidates.write_text(
+        '{"task_id":"t1","test_files":["tests/test_a.py","tests/test_mypy.yml",'
+        '"tests/conftest.py","tests/typing_example.py","tests/data/x.py"]}\n'
+    )
+    monkeypatch.setattr(h, "CANDIDATES_PATH", candidates)
+    assert h.test_files("t1") == ["tests/test_a.py"]

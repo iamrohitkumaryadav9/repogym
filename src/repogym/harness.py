@@ -27,6 +27,7 @@ from repogym.env.sandbox import EnvSetupError
 from repogym.flags import compute, future_gold_lines
 from repogym.grade import Grade, grade
 from repogym.release import ReleaseTask
+from repogym.validate import runnable_test_files
 
 RUNS_DIR = DATA_DIR / "runs"
 
@@ -91,10 +92,13 @@ def repogym_commit() -> tuple[str, bool]:
 
 
 def test_files(task_id: str) -> list[str]:
+    """The test files grading runs: validation's exact selection (runnable files only), so
+    rewards are comparable with v0.1 validation. Passing every touched test path would, e.g.,
+    hand pytest a .yml data file and abort the run with a usage error."""
     with CANDIDATES_PATH.open(encoding="utf-8") as handle:
         for line in handle:
             if f'"task_id":"{task_id}"' in line:
-                return json.loads(line)["test_files"]
+                return runnable_test_files(json.loads(line)["test_files"])
     raise KeyError(task_id)
 
 

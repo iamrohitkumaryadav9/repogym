@@ -47,6 +47,13 @@ from repogym.tasktype import TaskTypeClassifier, classify_task_type
 
 log = structlog.get_logger()
 
+
+def runnable_test_files(touched: list[str]) -> list[str]:
+    """The touched test files pytest is pointed at. Grading uses exactly this selection too,
+    so rewards are measured on the same tests as validation."""
+    return [path for path in touched if is_runnable_test_file(path)]
+
+
 ORACLE_RUNS = 3
 _FAILING = {TestStatus.FAILED, TestStatus.ERROR}
 
@@ -209,7 +216,7 @@ def validate_candidate(
 ) -> Outcome:
     """Run the checks for one candidate, stopping at the first failure."""
     spec = get_repo(candidate.repo)
-    test_files = [path for path in candidate.test_files if is_runnable_test_file(path)]
+    test_files = runnable_test_files(candidate.test_files)
     runs: dict[str, TestRun] = {}
     record: BaselineRecord | None = None
 
