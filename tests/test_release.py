@@ -108,6 +108,8 @@ def _task(task_id, merged, split, repo="pallets/click"):
         issue_body="b", gold_patch="g", test_patch="t", fail_to_pass=["m::a"], pass_to_pass=[],
         docker_image="repogym/click:base", task_type="bug", task_type_source="github",
         spec_clear=True, spec_clear_source="heuristic", spec_check_clear=True, spec_issues=[],
+        upstream_license="BSD-3-Clause", upstream_license_file="LICENSE.txt",
+        upstream_license_sha256="abc",
     )  # fmt: skip
 
 
@@ -165,6 +167,8 @@ def test_manifest_records_both_split_views_cutoffs_and_labels(tmp_path):
     assert "python-attrs/attrs" not in global_view["per_repo"]["test"]
     assert manifest["labels"]["task_type_source"] == {"github": 30}
     assert manifest["classifier"]["prompt_version"] == "p"
+    assert manifest["upstream_licenses"]["counts"] == {"BSD-3-Clause": 30}
+    assert manifest["upstream_licenses"]["per_repo"]["pallets/click"]["spdx"] == ["BSD-3-Clause"]
     assert validate_release(out) == []
 
 

@@ -40,6 +40,9 @@ class ReleaseTask(BaseModel):
     spec_clear_source: str  # human | heuristic
     spec_check_clear: bool  # the heuristic check's own verdict, kept even when a human overrides
     spec_issues: list[str]  # names the heuristic check flagged
+    upstream_license: str  # SPDX id of the upstream repo's licence at base_commit
+    upstream_license_file: str
+    upstream_license_sha256: str
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,26 @@ def build_manifest(
             },
         },
         "merged_at_range": [ordered[0].merged_at, ordered[-1].merged_at] if ordered else None,
+        "upstream_licenses": {
+            "note": "Each task's code, patches and issue text come from its upstream repository "
+            "and remain under that repository's licence, read at the task's base_commit. The "
+            "RepoGym code is MIT-licensed.",
+            "per_task_field": "upstream_license",
+            "counts": counts("upstream_license"),
+            "per_repo": {
+                repo: {
+                    "spdx": sorted({t.upstream_license for t in ordered if t.repo == repo}),
+                    "files": sorted(
+                        {
+                            f"{t.upstream_license_file} sha256:{t.upstream_license_sha256}"
+                            for t in ordered
+                            if t.repo == repo
+                        }
+                    ),
+                }
+                for repo in sorted({t.repo for t in ordered})
+            },  # fmt: skip
+        },
         "labels": {
             "task_type": counts("task_type"),
             "task_type_source": counts("task_type_source"),
@@ -281,6 +304,8 @@ def validate_release(out_dir: Path) -> list[str]:
             day, global_view["dev_cutoff_date"], global_view["test_cutoff_date"]
         ):
             problems.append(f"{t.task_id}: split_global disagrees with the global cutoffs")
+        if not t.upstream_license:
+            problems.append(f"{t.task_id}: no upstream licence")
         if not t.fail_to_pass:
             problems.append(f"{t.task_id}: empty FAIL_TO_PASS")
         if set(t.fail_to_pass) & set(t.pass_to_pass):

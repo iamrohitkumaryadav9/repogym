@@ -19,9 +19,11 @@ from repogym.config import (
     TASK_TYPE_RUNS_PATH,
     TASK_TYPE_SHEET,
     VERIFIED_PATH,
+    get_repo,
 )
 from repogym.consensus import MIN_CONFIDENCE, RUNS, decide, latest_runs
 from repogym.labels import final_label, human_labels
+from repogym.licenses import license_at
 from repogym.models import Candidate, Provenance, VerifiedTask
 from repogym.release import (
     ReleaseTask,
@@ -151,6 +153,7 @@ def assemble() -> tuple[list[ReleaseTask], tuple, dict[str, str], dict]:
             human_spec=spec_human.get(task.task_id),
             consensus=consensus.get(task.task_id),
         )
+        upstream = license_at(get_repo(task.repo).bare_path, task.base_commit)
         base = f"https://github.com/{c.repo}"
         fields = task.model_dump(exclude={"task_type", "spec_clear"})
         released.append(
@@ -167,6 +170,9 @@ def assemble() -> tuple[list[ReleaseTask], tuple, dict[str, str], dict]:
                 created_at=c.created_at,
                 pr_url=f"{base}/pull/{c.pr_number}",
                 issue_url=f"{base}/issues/{c.issue_number}",
+                upstream_license=upstream.spdx,
+                upstream_license_file=upstream.file,
+                upstream_license_sha256=upstream.file_sha256,
             )
         )
     unknown = [t.task_id for t in tasks if t.task_type == "unknown"]
