@@ -417,3 +417,10 @@ def test_f1():
     pr = precision_recall(actual=[True, True, True, False], flagged=[True, True, False, True])
     assert pr.f1 == pytest.approx(2 / 3)
     assert precision_recall([False], [False]).f1 is None
+
+
+def test_network_is_blocked_in_unit_tests():
+    from tests.conftest import NetworkBlocked
+
+    with pytest.raises(NetworkBlocked):
+        httpx.get("https://example.com", timeout=1)

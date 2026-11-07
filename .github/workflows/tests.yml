@@ -28,10 +28,10 @@ jobs:
           uv run --no-sync ruff check src tests
           uv run --no-sync ruff format --check src tests
 
-      # Unit tests use mocked Docker and a fake Gemini transport. The network is cut off for
-      # this step (unshare -rn) and DOCKER_HOST points nowhere, so a test that reached either
+      # Unit tests use mocked Docker and a fake Gemini transport. tests/conftest.py makes any
+      # TCP/UDP connection raise, and DOCKER_HOST points nowhere, so a test that reached either
       # would fail rather than pass by accident. No secrets are available to this job.
       - name: Unit tests (no network, no Docker)
         env:
           DOCKER_HOST: unix:///nonexistent.sock
-        run: unshare -rn .venv/bin/python -m pytest -q -p no:cacheprovider
+        run: uv run --no-sync pytest -q
