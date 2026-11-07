@@ -168,6 +168,36 @@ other languages. FAIL_TO_PASS size is reported, not filtered: 129 tasks have a s
 FAIL_TO_PASS test, which gives a sparser reward signal. The classifier calibration labels came
 from a single run, so their κ predates the 3-run rule.
 
+## Data and licensing
+
+The **RepoGym code** is MIT-licensed (see [LICENSE](LICENSE)).
+
+The **tasks are not relicensed**. Each task contains code, patches (`gold_patch`, `test_patch`)
+and issue text from its upstream repository, and stays under that repository's licence. Each
+repo's licence below was read from the repository itself at every task's `base_commit`: the
+`license` field of its `pyproject.toml`, cross-checked against the text of its licence file. Each
+licence file was byte-identical at every base commit. Nothing was inferred from the repository
+name or its GitHub page.
+
+| Repository | Licence (SPDX) | File | Tasks |
+|---|---|---|---|
+| pallets/click | BSD-3-Clause | `LICENSE.txt` | 71 |
+| pylint-dev/astroid | LGPL-2.1-or-later | `LICENSE` | 67 |
+| python-poetry/tomlkit | MIT | `LICENSE` | 45 |
+| PyCQA/isort | MIT | `LICENSE` | 43 |
+| python-attrs/attrs | MIT | `LICENSE` | 21 |
+
+For 11 older click base commits, `pyproject.toml` only points to `LICENSE.txt`. There, the
+identifier comes from the file's text: three-clause BSD, byte-identical to the file at the
+commits that declare `BSD-3-Clause`. Each task in `tasks.jsonl` records `upstream_license`,
+`upstream_license_file` and that file's SHA-256, and the manifest summarises them per repo.
+
+Issue titles and bodies were written by GitHub users in each project's issue tracker, so they
+are also subject to [GitHub's Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)
+and their authors' rights. If you redistribute the tasks, keep each repository's licence and
+attribution. Each task links back to its PR and issue. To cite RepoGym, see
+[CITATION.cff](CITATION.cff).
+
 ---
 
 ## Details
