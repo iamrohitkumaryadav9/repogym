@@ -61,6 +61,13 @@ class PrecisionRecall:
         actual = self.true_positive + self.false_negative
         return self.true_positive / actual if actual else None
 
+    @property
+    def f1(self) -> float | None:
+        p, r = self.precision, self.recall
+        if p is None or r is None or p + r == 0:
+            return None
+        return 2 * p * r / (p + r)
+
 
 def precision_recall(actual: Sequence[bool], flagged: Sequence[bool]) -> PrecisionRecall:
     """``actual``/``flagged`` are True for the positive class (here: underspecified)."""

@@ -411,3 +411,9 @@ def test_sheets_saved_with_a_bom_are_read(tmp_path):
     path = tmp_path / "sheet.csv"
     path.write_bytes(("﻿task_id," + TYPE_COLUMN + "\r\nt1, Bug \r\nt2,\r\n").encode())
     assert _filled(path, TYPE_COLUMN) == {"t1": "bug"}
+
+
+def test_f1():
+    pr = precision_recall(actual=[True, True, True, False], flagged=[True, True, False, True])
+    assert pr.f1 == pytest.approx(2 / 3)
+    assert precision_recall([False], [False]).f1 is None
