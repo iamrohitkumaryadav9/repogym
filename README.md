@@ -57,15 +57,37 @@ container. Each run starts a fresh container that:
 5. runs only the test files `test_patch` touches, and reports each test's result from pytest's JUnit
    XML.
 
-Containers run with `--network none`, a 2 GB memory limit, 2 CPUs and a 300-second timeout, and are
-always removed afterwards. If setup fails (checkout, install, or a patch that doesn't apply), the
+Containers run with `--network none`, a 2 GB memory limit and 2 CPUs, and are always removed
+afterwards. If setup fails (checkout, install, or a patch that doesn't apply), the
 task is rejected with that stage as the reason, and validation carries on. Commit-specific images are
 supported in the design but none have been needed. Every image build is logged to
 `data/image_builds.jsonl`.
 
+All builds go through a dedicated buildx builder, `repogym-builder` (docker-container driver,
+images loaded into the local store with `--load`). Its build cache is therefore separate from
+other projects' cache. `repogym clean --build-cache` prunes only that builder, and `repogym stats`
+reports RepoGym-only disk (images, builder cache and the buildkit image) separately from total
+Docker usage. The 10 GB budget applies to RepoGym-only usage.
+
 Click's old tests break under pytest 9, which deprecates a parametrize pattern they use, and click
 treats warnings as errors. Its base image therefore pins `pytest<9`, so no click task needs its own
-image.
+image. Its image also installs `less`. Without it, one pager test closes the captured stdout, and
+every later test in `tests/test_utils.py` errors during setup.
+
+#### Timeouts
+
+There are two timeouts, applied in exactly the same way to every run: the baseline, unsolved,
+no-op and oracle checks, and any future agent runs, which use the same `run_tests` call.
+
+* **30 seconds per test** (`pytest-timeout`, signal method). A test that hits it is recorded as
+  **FAILED**, whether it hung in the test body or in a fixture. The rest of the file keeps
+  running, so a bug that makes one test hang yields a normal failing test instead of a lost run.
+* **300 seconds per container**, as a backstop for anything the per-test timeout can't interrupt.
+  Hitting it rejects the task (`*_timeout`).
+
+To keep a slow but correct fix from failing on a busier machine, every FAIL_TO_PASS and
+PASS_TO_PASS test must finish in under 10 seconds (a third of the per-test timeout) in **all three**
+oracle runs. Otherwise the task is rejected as `oracle_too_close_to_timeout`.
 
 ### The three validity checks
 
@@ -119,18 +141,55 @@ uv run pytest                                         # unit tests, no network
 
 ### Week 1 results
 
-| Repo | Merged PRs (3 yrs) | Candidates | Verified |
-|---|---|---|---|
-| pallets/click | 349 | 75 | 69 |
-| pylint-dev/astroid | 765 | 73 | 66 |
-| python-poetry/tomlkit | 205 | 49 | 44 |
-| PyCQA/isort | 275 | 49 | 43 |
-| python-attrs/attrs | 200 | 25 | 21 |
-| **Total** | **1,794** | **271** | **243** |
+| Repo | Merged PRs (3 yrs) | Candidates | Verified | bug | feature | unknown | spec unclear |
+|---|---|---|---|---|---|---|---|
+| pallets/click | 349 | 75 | 71 | 0 | 0 | 71 | 2 |
+| pylint-dev/astroid | 765 | 73 | 66 | 51 | 4 | 11 | 1 |
+| python-poetry/tomlkit | 205 | 49 | 45 | 1 | 0 | 44 | 1 |
+| PyCQA/isort | 275 | 49 | 43 | 4 | 0 | 39 | 2 |
+| python-attrs/attrs | 200 | 25 | 21 | 6 | 6 | 9 | 3 |
+| **Total** | **1,794** | **271** | **246** | **62** | **10** | **174** | **9** |
 
-Rejections: 17 where nothing fails without the fix, 4 where the fix doesn't make the tests pass, 3
-with no runnable test file, and 3 timeouts plus 1 out-of-memory, all in the unsolved run. The median
-verified task changes 45 lines, and its touched tests run in 1.7 seconds.
+Rejections (25): 19 where nothing fails without the fix, 3 with no runnable test file, 2 where the
+fix doesn't make the tests pass, and 1 out-of-memory. FAIL_TO_PASS size: 129 tasks have exactly
+1 test, 87 have 2–5, and 30 have 6 or more. The median verified task changes 45 lines, and its
+touched tests run in 1.8 seconds. RepoGym-only Docker disk is 2.73 GB.
 
-Not every verified task is a bug fix. The filters accept any merged PR that links an issue, and 9
-verified tasks come from issues labelled as features or enhancements.
+The per-test timeout recovered 3 of the 4 tasks earlier rejected for a container timeout or
+running out of memory (`click-2775`, `click-2934`, `tomlkit-509`). In each, the bug made a test hang
+without the fix, and their oracle runs take under 2 seconds. `astroid-2596` still runs out of
+memory without the fix: memory blows up faster than the 30-second limit, so the 2 GB cgroup kills
+pytest first.
+
+### Task type and specification clarity
+
+Every verified task carries three extra fields, set by `validate` and recomputed by
+`repogym annotate`:
+
+* **`task_type`**: `"bug"`, `"feature"` or `"unknown"`, from the PR and issue labels (for example
+  *Bug*, *Crash*, *Regression* versus *Feature*, *Enhancement*). No labels, or labels pointing both
+  ways, give `"unknown"`. `repogym.tasktype.TaskTypeClassifier` is a hook for a later LLM
+  classifier that only runs when the labels are inconclusive (see the TODO there).
+* **`spec_clear`** and **`spec_issues`**: whether the issue tells an agent enough to pass the tests.
+  The check (`repogym/spec.py`) parses the patched test files and collects what the *added* lines
+  use from the library: names imported from the package, attributes, keyword arguments and
+  `--cli-option` strings. A name is reported in `spec_issues` if it is public, is not defined in the
+  package source at `base_commit`, is not defined by the tests themselves, appears in the gold
+  patch's added lines (so the fix introduces it), and is not mentioned in the issue title or body.
+  Attributes of builtins, common stdlib modules and pytest are ignored. Flagged tasks are kept,
+  with `spec_clear=false`.
+
+**Why underspecified tasks hurt RL reward quality.** The reward is "do the hidden tests pass".
+If those tests need a name the issue never states, such as `PY_3_13_PLUS` or a keyword
+`force_kw_only=`, a policy can only get the reward by guessing that exact name. A correct fix
+under any other name scores the same as no fix, so the reward stops measuring whether the bug was
+fixed. In RL this does two kinds of damage. It adds noise to the advantage estimate on otherwise
+good trajectories. It also rewards the wrong habits: memorising upstream naming conventions, or
+searching the repo and its history for hints about the tests. That is reward hacking, not issue
+solving. Marking these tasks lets training down-weight or exclude them, and lets evaluation report
+scores with and without them.
+
+FAIL_TO_PASS size matters too, but is only reported, not filtered. With a single test the reward
+is effectively binary and easier to satisfy with a narrow special case. Tasks with several
+FAIL_TO_PASS tests give a denser, harder-to-game signal. `repogym stats` reports how many tasks
+have 1, 2–5, or 6+ FAIL_TO_PASS tests.
