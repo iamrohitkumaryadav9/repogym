@@ -95,3 +95,8 @@ class BaselineRecord(BaseModel):
     repo: str
     failing: list[str]
     collection_errors: list[str]
+
+
+class RunMetrics(BaseModel):
+    task_id: str
+    oracle_seconds: float

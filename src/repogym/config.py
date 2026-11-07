@@ -14,6 +14,7 @@ MINING_REPORT_PATH = DATA_DIR / "mining_report.jsonl"
 VERIFIED_PATH = DATA_DIR / "tasks_verified.jsonl"
 REJECTIONS_PATH = DATA_DIR / "rejections.jsonl"
 BASELINE_PATH = DATA_DIR / "baseline_failures.jsonl"
+RUN_METRICS_PATH = DATA_DIR / "run_metrics.jsonl"
 BUILD_LOG_PATH = DATA_DIR / "image_builds.jsonl"
 
 MINING_WINDOW_DAYS = 3 * 365
