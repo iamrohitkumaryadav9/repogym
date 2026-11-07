@@ -1,0 +1,36 @@
+ast-serialize==0.13.1
+attrs==26.1.0
+colorama==0.4.6 ; sys_platform == 'win32'
+coverage==7.17.2
+flit-core==4.2.0
+hatch-fancy-pypi-readme==25.1.0
+hatch-vcs==0.5.0
+hatchling==1.33.0
+iniconfig==2.3.1
+lazy-object-proxy==1.13.0
+librt==0.16.0 ; platform_python_implementation != 'PyPy'
+mypy==2.4.1
+mypy-extensions==1.2.0
+numpy==2.4.6 ; python_full_version < '3.12'
+numpy==2.5.4 ; python_full_version >= '3.12'
+packaging==26.3
+pathspec==1.1.1
+pip==26.3
+pluggy==1.7.0
+poetry-core==2.5.0
+pygments==2.21.0
+pytest==9.2.0
+pytest-cov==7.1.0
+python-dateutil==4.0.0
+regex==2026.11.7
+setuptools==81.0.0
+setuptools-scm==10.3.4
+six==1.17.0
+tomlkit==0.15.2
+trove-classifiers==2026.9.21.13
+typing-extensions==4.16.0
+tzdata==2026.6
+urllib3==1.26.20
+vcs-versioning==2.6.0
+wheel==0.48.0
+wrapt==2.5.2

@@ -35,3 +35,6 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]  # typer's Option() defaults are idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

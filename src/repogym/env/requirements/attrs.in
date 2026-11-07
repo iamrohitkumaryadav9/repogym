@@ -1,0 +1,15 @@
+pip
+setuptools<82
+wheel
+pytest
+pytest-cov
+flit_core
+hatchling
+hatch-vcs
+hatch-fancy-pypi-readme
+poetry-core
+cloudpickle
+hypothesis
+pympler
+pytest-xdist[psutil]
+zope.interface
