@@ -397,3 +397,38 @@ Every decision was approved, with these additions. They are binding for the impl
 * **Addition 2.** No task metadata may leak through the container: no task id, PR or issue
   numbers, gold or test patch content, or split information in environment variables, the
   hostname, container labels, or any file outside the repo. This is asserted.
+
+## 13. Implementation outcomes (2026-11-07)
+
+* **D5, ATIF.** Trajectories are `ATIF-v1.8`. Harbor 0.24.0's own validator
+  (`python -m harbor.utils.trajectory_validator`, in an isolated `uvx --python 3.12` environment)
+  accepts `ATIF-v1.0` through `ATIF-v1.8`. It validates our Oracle and Cheater trajectories, and
+  it rejects a bad version or a dangling `source_call_id`. Our own validator runs in CI.
+* **D7, read-only root: evaluated and not adopted.** Measured on one dev task per repo:
+
+  | | Writable root (kept) | Read-only root + tmpfs `/work`, `/tmp` (512 MB each) |
+  |---|---|---|
+  | Setup time | 7.4–15.7 s | 7.5–11.0 s |
+  | Peak memory (setup + one test run) | 74–144 MiB | 110–128 MiB (tmpfs 27–45 MB counts toward the container's memory) |
+  | Disk written per episode | 6.9–21.6 MB | 0 |
+  | `docker cp` of `/work` | works | fails in both directions |
+  | "Installed exactly once" assertion (unchanged) | holds for all 5 repos | **fails for tomlkit**: the image's `tomlkit 0.15.2` stays installed and can't be removed |
+  | Editable install | works | **fails for astroid** (metadata generation) |
+
+  Under the review rule that leak-proofing outranks the disk cap, the read-only root is
+  rejected. Making it work would need tomlkit's copy masked with an extra mount, which is a
+  weaker F8 guarantee. Instead, the writable root stays, with:
+  * a disk budget (`max_disk_mb`, default 2048), measured after every step with
+    `docker inspect --size` (about 0.06 s per check);
+  * a per-file size limit on every command (`ulimit -f`, `max_file_mb`, default 1024);
+  * the disk written per episode recorded in the episode record.
+
+  **Remaining limitation:** a single command can still write many files below the per-file
+  limit before the next check. It's bounded by the command timeout, and the episode then ends
+  with `budget:disk`.
+* **MCP.** Built with `mcp` 2.3.0 (`MCPServer`). The final `submit` call returns only after the
+  episode is graded and recorded, because MCP clients typically shut the server down as soon as
+  they get that reply.
+* **D3, evidence.** A single `conftest.py` hook that turns failures into passes gets **reward 1
+  on 14/14** dev tasks with no reverts, and also with the brief's original "revert test_patch
+  paths" rule. With the extended D3 rules it gets **0/14**.
