@@ -60,6 +60,10 @@ def uncommitted_inputs() -> str:
     ).stdout.strip()  # fmt: skip
 
 
+# Code that decides whether a task is verified and what its test lists are.
+VALIDATION_CODE = ("src/repogym/validate.py", "src/repogym/env", "src/repogym/spec.py",
+                   "src/repogym/tasktype.py", "src/repogym/mining/patches.py")  # fmt: skip
+
 VALIDATED_DATA = (
     "data/tasks_verified.jsonl",
     "data/rejections.jsonl",
@@ -78,9 +82,9 @@ def _git(*args: str) -> str:
 def commit_record(validation_commits: list[str], release_commit: str) -> dict:
     """Which commit validated the data, which built the release, and whether the data moved.
 
-    The validated data files must be byte-identical to the commit that last wrote them, and
-    the code diff since validation is summarised, so a reader can see that code changed after
-    validation (labelling, release tooling) while the validated data did not.
+    The validated data files must be byte-identical to the commit that last wrote them. The code
+    changed since validation is listed, along with any change to the validation code itself, so a
+    reader can see that code changed after validation while the validated data did not.
     """
     data_commit = _git("log", "-1", "--format=%H", "--", *VALIDATED_DATA)
     files = {}
@@ -91,20 +95,23 @@ def commit_record(validation_commits: list[str], release_commit: str) -> dict:
                               capture_output=True, check=True).stdout  # fmt: skip
         unchanged &= hashlib.sha256(blob).hexdigest() == current
         files[path] = current
-    changed_code = {
+    changed = {
         commit: _git("diff", "--name-only", f"{commit}..{release_commit}", "--", "src").splitlines()
         for commit in validation_commits
     }
+    touched_validation = {
+        commit: _git("diff", "--name-only", f"{commit}..{release_commit}", "--",
+                     *VALIDATION_CODE).splitlines()
+        for commit in validation_commits
+    }  # fmt: skip
     return {
         "validation": validation_commits,
         "release": release_commit,
         "validated_data_commit": data_commit,
         "validated_data_unchanged_since_that_commit": unchanged,
         "validated_data_sha256": files,
-        "code_files_changed_since_validation": {c: len(f) for c, f in changed_code.items()},
-        "note": "Tasks were validated at the 'validation' commit. Later commits changed "
-        "labelling and release code only; the validated data files are byte-identical to "
-        "'validated_data_commit'.",
+        "code_changed_since_validation": changed,
+        "validation_code_changed_since_validation": touched_validation,
     }
 
 
