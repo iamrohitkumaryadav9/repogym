@@ -40,10 +40,11 @@ _SAFE = [
     "-c",
     "core.fsmonitor=false",
     "-c",
-    "diff.external=",
-    "-c",
     "core.attributesFile=/dev/null",
 ]
+# External diff drivers are impossible here: user and system config are disabled (_ENV), the
+# clone is our own, and every `git diff` passes --no-ext-diff and --no-textconv. (Setting
+# diff.external to an empty value does NOT disable it; git tries to run an empty command.)
 
 
 class ExtractError(RuntimeError):
