@@ -466,3 +466,10 @@ D7 is recorded in §13 as an **evaluated and rejected alternative**. A read-only
 `/work` and `/tmp` would weaken the installed-once guarantee for tomlkit: the image's released
 copy can't be removed, only masked. Also, astroid's editable install fails under it. The writable
 root is kept, with the 2 GB per-episode disk budget and the 1 GiB per-file limit.
+
+**Leak detector, consistent with D6.** `gold_content_in_observations` looks only for *future*
+information: distinctive gold lines that appear nowhere in the reachable history. Lines that a
+past commit also added are legitimate context. Each episode records them separately, in
+`past_gold_lines_observed`, which is informational and not a flag. The first clean dev run
+showed why this matters: on `pallets__click-3582`, the Cheater's `git log --all -p` showed
+`.. versionchanged:: 8.4.2`, a line that a past commit had also added.
