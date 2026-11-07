@@ -94,3 +94,27 @@ def test_probe_finds_the_fix_when_history_contains_it(upstream, tmp_path):
 def test_patch_id_ignores_whitespace_and_line_numbers(upstream):
     assert patch_id(upstream["gold"]) == patch_id(upstream["gold"].replace("@@ -1,2", "@@ -9,2"))
     assert patch_id("") is None
+
+
+def test_history_overlap_metrics_and_recoverable_threshold():
+    from repogym.env.history import history_overlap
+
+    hits = {f"line {i}": ["c1"] for i in range(5)} | {"line 5": ["c2", "c1"], "line 6": ["c2"]}
+    o = history_overlap(hits, distinctive=10)
+    assert (o.top_commit, o.top_commit_lines, o.lines, o.max_fraction) == ("c1", 6, 7, 0.6)
+    assert o.recoverable  # one past commit holds >= 50% and >= 5 distinctive lines
+    small = history_overlap({"a": ["c"], "b": ["c"]}, distinctive=2)
+    assert small.max_fraction == 1.0 and not small.recoverable  # 100%, but only 2 lines
+    spread = history_overlap({f"l{i}": [f"c{i}"] for i in range(8)}, distinctive=10)
+    assert spread.max_fraction == 0.1 and not spread.recoverable
+    none = history_overlap({}, distinctive=4)
+    assert none.top_commit is None and none.max_fraction == 0.0 and not none.recoverable
+
+
+def test_past_overlap_alone_does_not_fail_the_probe(upstream, tmp_path):
+    # The base's own ancestors re-add a line the fix also adds: context, not a leak (D6).
+    bundle = make_bundle(upstream["bare"], upstream["b"], tmp_path / "t.bundle")
+    gold = upstream["gold"] + "+    return value\n"  # 'return value' was added by commit A
+    result = probe_bundle(bundle, gold, ["return value"])
+    assert result.line_hits == {"return value": [upstream["a"]]}
+    assert result.clean and not result.overlap().recoverable

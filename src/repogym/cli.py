@@ -502,6 +502,81 @@ def mcp(
     serve_task(task, RUNS_DIR / run_id, Budgets())
 
 
+@app.command("probe-history")
+def probe_history(
+    release: Annotated[str, typer.Option(help="Release version.")] = "v0.1",
+) -> None:
+    """Probe every task's episode history for the gold patch (resumable).
+
+    Writes data/probe/gold_probe.jsonl (raw: patch-id matches and past commits adding each
+    distinctive gold line) and data/probe/history_overlap.jsonl (per-task overlap metrics and
+    history_recoverable, used to break results down)."""
+    import dataclasses
+    import tempfile
+    from pathlib import Path
+
+    from repogym.config import DATA_DIR
+    from repogym.env.history import distinctive_lines, history_overlap, make_bundle, probe_bundle
+    from repogym.release import ReleaseTask
+
+    raw = DATA_DIR / "probe" / "gold_probe.jsonl"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    tasks = [
+        ReleaseTask.model_validate_json(line)
+        for line in (RELEASE_DIR / release / "tasks.jsonl").read_text().splitlines()
+    ]
+    done = (
+        {json.loads(line)["task_id"] for line in raw.read_text().splitlines()}
+        if raw.exists()
+        else set()
+    )
+    with raw.open("a", encoding="utf-8") as handle:
+        for task in tasks:
+            if task.task_id in done:
+                continue
+            spec = get_repo(task.repo)
+            with tempfile.TemporaryDirectory() as tmp:
+                bundle = make_bundle(spec.bare_path, task.base_commit, Path(tmp) / "t.bundle")
+                lines = distinctive_lines(spec.bare_path, task.base_commit, task.gold_patch)
+                result = probe_bundle(bundle, task.gold_patch, lines)
+            handle.write(
+                json.dumps(
+                    {
+                        "task_id": task.task_id,
+                        "commits": result.commits,
+                        "distinctive": result.distinctive_lines,
+                        "patch_id_match": result.patch_id_match,
+                        "line_hits": result.line_hits,
+                    }
+                )
+                + "\n"
+            )
+            handle.flush()
+            typer.echo(f"{task.task_id}: {len(result.line_hits)}/{result.distinctive_lines} lines")
+    rows = {json.loads(line)["task_id"]: json.loads(line) for line in raw.read_text().splitlines()}
+    out = DATA_DIR / "probe" / "history_overlap.jsonl"
+    with out.open("w", encoding="utf-8") as handle:
+        for task_id, row in sorted(rows.items()):
+            o = dataclasses.asdict(history_overlap(row["line_hits"], row["distinctive"]))
+            handle.write(
+                json.dumps(
+                    {
+                        "task_id": task_id,
+                        "exact_fix_reachable": bool(row["patch_id_match"]),
+                        "history_overlap_max_fraction": o["max_fraction"],
+                        "history_overlap_lines": o["lines"],
+                        "distinctive_lines": o["distinctive"],
+                        "top_overlapping_commit": o["top_commit"],
+                        "top_commit_lines": o["top_commit_lines"],
+                        "history_recoverable": o["recoverable"],
+                    }
+                )
+                + "\n"
+            )
+    reachable = [t for t, r in rows.items() if r["patch_id_match"]]
+    typer.echo(f"{len(rows)} tasks probed; exact fix reachable: {len(reachable)} {reachable}")
+
+
 @app.command("llm-audit")
 def llm_audit(
     delete_bad: Annotated[bool, typer.Option(help="Delete entries that fail the audit.")] = False,

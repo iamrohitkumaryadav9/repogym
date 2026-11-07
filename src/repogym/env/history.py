@@ -113,7 +113,53 @@ class ProbeResult:
 
     @property
     def clean(self) -> bool:
-        return not self.patch_id_match and not self.line_hits
+        """No exact copy of the fix is reachable: the only thing setup hard-fails on (D6).
+
+        Line overlap with PAST commits is legitimate context, not leakage; see ``overlap``."""
+        return not self.patch_id_match
+
+    def overlap(self) -> HistoryOverlap:
+        return history_overlap(self.line_hits, self.distinctive_lines)
+
+
+RECOVERABLE_FRACTION = 0.5
+RECOVERABLE_MIN_LINES = 5
+
+
+@dataclass(frozen=True)
+class HistoryOverlap:
+    """How much of the fix's distinctive code already appears in the task's PAST history.
+
+    Past history is context a developer would have (e.g. ``git log -S`` finds code that was
+    deleted), so this is recorded, not treated as a leak. ``recoverable`` marks tasks where one
+    past commit holds most of a substantial fix: results are broken down by it.
+    """
+
+    max_fraction: float  # largest share of distinctive lines added by a single past commit
+    lines: int  # distinctive lines added by any past commit
+    distinctive: int
+    top_commit: str | None
+    top_commit_lines: int
+    recoverable: bool
+
+
+def history_overlap(line_hits: dict[str, list[str]], distinctive: int) -> HistoryOverlap:
+    per_commit: dict[str, int] = {}
+    for commits in line_hits.values():
+        for commit in set(commits):
+            per_commit[commit] = per_commit.get(commit, 0) + 1
+    if not per_commit or not distinctive:
+        return HistoryOverlap(0.0, len(line_hits), distinctive, None, 0, False)
+    top, count = max(sorted(per_commit.items()), key=lambda kv: kv[1])
+    fraction = count / distinctive
+    return HistoryOverlap(
+        max_fraction=round(fraction, 4),
+        lines=len(line_hits),
+        distinctive=distinctive,
+        top_commit=top,
+        top_commit_lines=count,
+        recoverable=fraction >= RECOVERABLE_FRACTION and count >= RECOVERABLE_MIN_LINES,
+    )
 
 
 _COMMIT = re.compile(r"^commit ([0-9a-f]{40})")

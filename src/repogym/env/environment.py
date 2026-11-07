@@ -106,10 +106,14 @@ def task_needles(task: ReleaseTask) -> Needles:
     return Needles(tuple(dict.fromkeys(strings)), (pr, issue))
 
 
-def gold_probe(task: ReleaseTask):
-    """A bundle check: the gold patch must not be findable in the episode's history, neither as
-    an exact commit (patch-id) nor by its distinctive added lines in `git log --all -p`.
-    Results are cached per (task, base_commit, gold patch hash)."""
+def gold_probe(task: ReleaseTask, sink: dict | None = None):
+    """A bundle check, run on the exact bundle that goes into the container.
+
+    Hard-fails only if the exact fix is reachable (a patch-id match): that would mean the
+    history was built wrongly, since it holds base_commit's ancestors only. Overlap of the fix's
+    distinctive lines with PAST commits is legitimate context a developer would have (D6), so it
+    is recorded in ``sink["history_overlap"]``, not failed on. Cached per (task, base, gold)."""
+    import dataclasses
     import hashlib
 
     spec = get_repo(task.repo)
@@ -124,14 +128,18 @@ def gold_probe(task: ReleaseTask):
             result = probe_bundle(bundle, task.gold_patch, lines)
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(result.__dict__))
+        overlap = result.overlap()
+        if sink is not None:
+            sink["history_overlap"] = dataclasses.asdict(overlap)
         if result.clean:
-            detail = f"{result.distinctive_lines} distinctive gold lines, {result.commits} commits"
-        else:
             detail = (
-                f"patch-id matches {result.patch_id_match[:3]}; {len(result.line_hits)}/"
-                f"{result.distinctive_lines} distinctive gold lines added in history"
+                f"no patch-id match in {result.commits} commits; past-history overlap "
+                f"{overlap.lines}/{overlap.distinctive} distinctive lines, max "
+                f"{overlap.max_fraction:.0%} in one commit, recoverable={overlap.recoverable}"
             )
-        return Check("gold_patch_not_in_history", result.clean, detail)
+        else:
+            detail = f"the exact fix is reachable: patch-id matches {result.patch_id_match[:3]}"
+        return Check("exact_fix_not_in_history", result.clean, detail)
 
     return check
 
@@ -167,6 +175,7 @@ class Environment:
         self.setup_report: SetupReport | None = None
         self._t0 = 0.0
         self._tracked: set[str] = set()
+        self.probe_info: dict = {}  # history_overlap, filled in during setup
 
     # -- OpenEnv-style API -------------------------------------------------------------------
 
@@ -175,7 +184,7 @@ class Environment:
             self.spec,
             self.task.base_commit,
             task_needles(self.task),
-            bundle_checks=[gold_probe(self.task)],
+            bundle_checks=[gold_probe(self.task, self.probe_info)],
         )
         self.setup_report = self.sandbox.setup()  # raises EnvSetupError; no episode starts
         self._tracked = set(

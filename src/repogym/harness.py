@@ -69,6 +69,9 @@ class EpisodeRecord(BaseModel):
     tokens: dict[str, int | None] = Field(default_factory=dict)
     cost_usd: float | None = None
     trajectory: str | None = None
+    # Past-history overlap of the fix (D6): recorded, never failed on; results break down by it.
+    history_overlap: dict | None = None
+    history_recoverable: bool | None = None
     disk_written_mb: float | None = None  # writable layer at the end (setup included)
     peak_disk_mb: float | None = None
 
@@ -135,6 +138,8 @@ def run_episode(
     assert env.setup_report is not None
     record.setup_seconds = env.setup_report.seconds
     record.setup_checks = {c.name: c.ok for c in env.setup_report.checks}
+    record.history_overlap = env.probe_info.get("history_overlap")
+    record.history_recoverable = (record.history_overlap or {}).get("recoverable")
     work = None
     try:
         try:
