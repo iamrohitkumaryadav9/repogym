@@ -83,6 +83,7 @@ class TaskTypeLabel(BaseModel):
     prompt_version: str = PROMPT_VERSION
     finish_reason: str | None = None
     cached: bool = False
+    run: int | None = None  # consensus run index; None for single-run labels
     error: str = ""
     labelled_at: str
 
@@ -134,24 +135,32 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def cache_key(candidate: Candidate) -> str:
-    return f"{PROMPT_VERSION}\n{build_prompt(candidate)}"
+def cache_key(candidate: Candidate, run: int | None = None) -> str:
+    """Prompt version + prompt; consensus runs add their index so each is a separate request.
+
+    ``run=None`` keeps the key used by the single-run calibration labels.
+    """
+    prefix = PROMPT_VERSION if run is None else f"{PROMPT_VERSION}\nrun={run}"
+    return f"{prefix}\n{build_prompt(candidate)}"
 
 
-def classify(candidate: Candidate, client: GeminiClient, refresh: bool = False) -> TaskTypeLabel:
+def classify(
+    candidate: Candidate, client: GeminiClient, refresh: bool = False, run: int | None = None
+) -> TaskTypeLabel:
     """Label one task, or mark it "unknown" with the error. Never guesses a label.
 
     Malformed JSON and incomplete answers (no candidates, empty text, finishReason other than
     STOP) get one fresh, uncached retry. Nothing that fails validation is ever cached.
     """
     prompt = build_prompt(candidate)
-    key = cache_key(candidate)
+    key = cache_key(candidate, run)
 
     def unknown(error: str) -> TaskTypeLabel:
         log.warning("classify_failed", task=candidate.task_id, error=error)
         return TaskTypeLabel(
-            task_id=candidate.task_id, task_type="unknown", error=error, labelled_at=_now()
-        )
+            task_id=candidate.task_id, task_type="unknown", error=error, run=run,
+            labelled_at=_now(),
+        )  # fmt: skip
 
     error = ""
     for attempt in range(2):
@@ -184,6 +193,7 @@ def classify(candidate: Candidate, client: GeminiClient, refresh: bool = False) 
             model=completion.model,
             finish_reason=completion.finish_reason,
             cached=completion.cached,
+            run=run,
             labelled_at=_now(),
         )
     return unknown(f"bad output twice; last: {error}")

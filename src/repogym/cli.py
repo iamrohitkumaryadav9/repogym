@@ -311,6 +311,37 @@ def classify(
     typer.echo(f"{client.requests} API requests; {len(new)} labels written to {path}")
 
 
+@app.command("classify-consensus")
+def classify_consensus(
+    interval: Annotated[float, typer.Option(help="Seconds between API requests.")] = 6.0,
+    limit: Annotated[int | None, typer.Option(help="Only the first N unknown tasks.")] = None,
+) -> None:
+    """Three runs per task with no GitHub type label; resumable. Writes the runs file only."""
+    from repogym.classify import TaskTypeLabel
+    from repogym.config import TASK_TYPE_RUNS_PATH
+    from repogym.consensus import classify_runs, decide, latest_runs, summarize
+    from repogym.models import Candidate, VerifiedTask
+    from repogym.validate import JsonlStore, read_jsonl
+
+    candidates = {c.task_id: c for c in read_jsonl(CANDIDATES_PATH, Candidate)}
+    unknown = sorted(t.task_id for t in read_jsonl(VERIFIED_PATH, VerifiedTask)
+                     if t.task_type == "unknown")  # fmt: skip
+    ids = unknown[:limit] if limit else unknown
+    done = latest_runs(read_jsonl(TASK_TYPE_RUNS_PATH, TaskTypeLabel))
+    store = JsonlStore(TASK_TYPE_RUNS_PATH)
+    client = _llm_client(interval)
+    try:
+        finished = classify_runs([candidates[t] for t in ids], client, done, store.append)
+    finally:
+        client.close()
+    if not finished:
+        typer.echo("Stopped: the API kept refusing (likely a quota). Rerun later to resume.")
+    results = [decide(t, list(done.get(t, {}).values())) for t in ids]
+    for line in summarize(results):
+        typer.echo(line)
+    typer.echo(f"{client.requests} API requests this session; runs in {TASK_TYPE_RUNS_PATH}")
+
+
 @app.command("llm-audit")
 def llm_audit(
     delete_bad: Annotated[bool, typer.Option(help="Delete entries that fail the audit.")] = False,
