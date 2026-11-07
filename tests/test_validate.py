@@ -63,6 +63,10 @@ def test_inconsistent_tests_finds_status_changes_and_missing_tests():
     assert v.inconsistent_tests(runs) == ["b"]
 
 
+def fake_annotator(candidate):
+    return "bug", True, []
+
+
 def _candidate():
     return Candidate(
         task_id="pallets__click-1",
@@ -101,7 +105,9 @@ GOOD_UNSOLVED = run({"m::new": F, "m::keep": P})
 
 
 def test_good_candidate_is_verified():
-    outcome = v.validate_candidate(_candidate(), scripted(run(), GOOD_UNSOLVED, GOOD_ORACLE))
+    outcome = v.validate_candidate(
+        _candidate(), annotator=fake_annotator, runner=scripted(run(), GOOD_UNSOLVED, GOOD_ORACLE)
+    )
     assert outcome.rejection is None
     assert outcome.verified.fail_to_pass == ["m::new"]
     assert outcome.verified.pass_to_pass == ["m::keep"]
@@ -154,14 +160,18 @@ def test_good_candidate_is_verified():
     ],
 )
 def test_rejections(kwargs, reason):
-    outcome = v.validate_candidate(_candidate(), scripted(run(), **kwargs))
+    outcome = v.validate_candidate(
+        _candidate(), annotator=fake_annotator, runner=scripted(run(), **kwargs)
+    )
     assert outcome.verified is None
     assert outcome.rejection.reason == reason
 
 
 def test_baseline_only_failures_give_a_distinct_reason():
     outcome = v.validate_candidate(
-        _candidate(), scripted(run({"m::a": F}), run({"m::a": F}), run({"m::a": P}))
+        _candidate(),
+        annotator=fake_annotator,
+        runner=scripted(run({"m::a": F}), run({"m::a": F}), run({"m::a": P})),
     )
     assert outcome.rejection.reason == "all_fixed_tests_fail_at_baseline"
     assert outcome.baseline.failing == ["m::a"]
@@ -169,7 +179,9 @@ def test_baseline_only_failures_give_a_distinct_reason():
 
 def test_env_failure_at_baseline_is_rejected_not_raised():
     outcome = v.validate_candidate(
-        _candidate(), scripted(run(stage=RunStage.INSTALL_FAILED), GOOD_UNSOLVED, GOOD_ORACLE)
+        _candidate(),
+        annotator=fake_annotator,
+        runner=scripted(run(stage=RunStage.INSTALL_FAILED), GOOD_UNSOLVED, GOOD_ORACLE),
     )
     assert outcome.rejection.reason == "env_install_failed"
 
@@ -192,9 +204,9 @@ def test_rerun_skips_finished_tasks(stores):
             return GOOD_ORACLE
         return GOOD_UNSOLVED if test_patch else run()
 
-    assert v.validate_all([_candidate()], 1, runner)["verified"] == 1
+    assert v.validate_all([_candidate()], 1, runner, fake_annotator)["verified"] == 1
     first = len(calls)
-    assert v.validate_all([_candidate()], 1, runner)["verified"] == 0
+    assert v.validate_all([_candidate()], 1, runner, fake_annotator)["verified"] == 0
     assert len(calls) == first
 
 
@@ -203,7 +215,7 @@ def test_docker_failure_records_nothing_so_rerun_retries(stores):
         raise DockerUnavailable("daemon gone")
 
     with pytest.raises(DockerUnavailable):
-        v.validate_all([_candidate()], 1, broken)
+        v.validate_all([_candidate()], 1, broken, fake_annotator)
     assert v.already_validated() == set()
 
 
@@ -234,4 +246,41 @@ def test_verified_schema_has_exactly_the_requested_fields():
     assert set(VerifiedTask.model_fields) == {
         "task_id", "repo", "base_commit", "issue_title", "issue_body", "gold_patch",
         "test_patch", "fail_to_pass", "pass_to_pass", "docker_image",
+        "task_type", "spec_clear", "spec_issues",
     }  # fmt: skip
+
+
+def test_slow_listed_test_in_any_oracle_run_is_rejected():
+    slow = run({"m::new": P, "m::keep": P})
+    slow.test_seconds = {"m::new": 12.0, "m::keep": 0.1}
+    outcome = v.validate_candidate(
+        _candidate(),
+        annotator=fake_annotator,
+        runner=scripted(run(), GOOD_UNSOLVED, GOOD_ORACLE, oracle_repeats=[GOOD_ORACLE, slow]),
+    )
+    assert outcome.rejection.reason == "oracle_too_close_to_timeout"
+    assert "m::new (12.0s)" in outcome.rejection.detail
+
+
+def test_slow_unlisted_test_does_not_reject():
+    lists = v.Lists(["m::new"], [])
+    slow = run({"m::new": P, "m::other": F})
+    slow.test_seconds = {"m::new": 1.0, "m::other": 29.0}
+    assert v.slow_listed_tests([slow], lists, 10) == []
+
+
+def test_hang_without_fix_becomes_a_failing_test():
+    """A per-test timeout in the unsolved run is just a failure, so the task can verify."""
+    hung = run({"m::new": F, "m::keep": P})
+    hung.timed_out = ["m::new"]
+    outcome = v.validate_candidate(
+        _candidate(), annotator=fake_annotator, runner=scripted(run(), hung, GOOD_ORACLE)
+    )
+    assert outcome.verified.fail_to_pass == ["m::new"]
+
+
+def test_forget_tasks_removes_records_from_every_store(stores):
+    v.JsonlStore(v.REJECTIONS_PATH).append(Rejection(task_id="a", repo="r", reason="x"))
+    v.JsonlStore(v.REJECTIONS_PATH).append(Rejection(task_id="b", repo="r", reason="x"))
+    assert v.forget_tasks({"a"}) == 1
+    assert v.already_validated() == {"b"}

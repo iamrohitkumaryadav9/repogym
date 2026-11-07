@@ -67,12 +67,13 @@ def build(
     """Clone the repos, fetch every candidate's base commit and build one image per repo."""
     from datetime import UTC, datetime
 
-    from repogym.env.docker import build_image, check_docker, disk_usage
+    from repogym.env.docker import build_image, check_docker, disk_usage, ensure_builder
     from repogym.env.repos import ensure_clones, ensure_commit
     from repogym.models import Candidate
     from repogym.validate import read_jsonl
 
     check_docker()
+    ensure_builder()
     candidates = read_jsonl(CANDIDATES_PATH, Candidate)
     BUILD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     for slug in _select_repos(repo):
@@ -92,6 +93,8 @@ def build(
         typer.echo(f"{spec.image}: built; {len(commits)} base commits, {len(missing)} unavailable")
     usage = disk_usage()
     typer.echo(f"Docker disk: repogym {_gb(usage.repogym_bytes)}, total {_gb(usage.total_bytes)}")
+    if usage.repogym_bytes > DOCKER_BUDGET_BYTES:
+        typer.echo("WARNING: repogym is over its 10 GB budget; try `repogym clean --build-cache`")
 
 
 @app.command()
@@ -102,19 +105,29 @@ def validate(
         list[str] | None, typer.Option(help="Rejection reason to re-validate; repeatable.")
     ] = None,
     limit: Annotated[int | None, typer.Option(help="Only the first N per repo.")] = None,
+    task: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Re-validate this task from scratch, discarding its records; repeatable."
+        ),
+    ] = None,
 ) -> None:
     """Apply the validity checks. Safe to interrupt: reruns skip finished tasks."""
     from collections import Counter
 
     from repogym.env.docker import check_docker
     from repogym.models import Candidate
-    from repogym.validate import forget_rejections, read_jsonl, validate_all
+    from repogym.validate import forget_rejections, forget_tasks, read_jsonl, validate_all
 
     check_docker()
+    if task:
+        typer.echo(f"Discarded {forget_tasks(set(task))} records for {len(task)} tasks")
     if retry:
         typer.echo(f"Forgot {forget_rejections(REJECTIONS_PATH, set(retry))} rejections")
     selected = {get_repo(slug).full_name for slug in _select_repos(repo)}
     candidates = [c for c in read_jsonl(CANDIDATES_PATH, Candidate) if c.repo in selected]
+    if task:
+        candidates = [c for c in candidates if c.task_id in set(task)]
     if limit is not None:
         seen: Counter[str] = Counter()
         limited = []
@@ -126,6 +139,29 @@ def validate(
     tally = validate_all(candidates, workers)
     for reason, count in tally.most_common():
         typer.echo(f"{count:5d}  {reason}")
+
+
+@app.command()
+def annotate() -> None:
+    """Recompute task_type and the spec check for every verified task, in place."""
+    from collections import Counter
+
+    from repogym.models import Candidate, VerifiedTask
+    from repogym.validate import annotate as annotate_task
+    from repogym.validate import read_jsonl
+
+    candidates = {c.task_id: c for c in read_jsonl(CANDIDATES_PATH, Candidate)}
+    tasks = read_jsonl(VERIFIED_PATH, VerifiedTask)
+    tally: Counter[str] = Counter()
+    for task in tasks:
+        task_type, spec_clear, spec_issues = annotate_task(candidates[task.task_id])
+        task.task_type, task.spec_clear, task.spec_issues = task_type, spec_clear, spec_issues
+        tally[f"{task_type} spec_clear={spec_clear}"] += 1
+    temp = VERIFIED_PATH.with_suffix(".tmp")
+    temp.write_text("".join(t.model_dump_json() + "\n" for t in tasks), encoding="utf-8")
+    temp.replace(VERIFIED_PATH)
+    for key, count in sorted(tally.items()):
+        typer.echo(f"{count:5d}  {key}")
 
 
 def _print_counter(title: str, counts: dict[str, int]) -> None:
@@ -159,6 +195,13 @@ def stats() -> None:
     _print_counter(
         "Most common baseline failures", dict(data.baseline_failing_tests.most_common(10))
     )
+    typer.echo("\nVerified tasks by repo x task_type x spec_clear")
+    typer.echo(f"  {'repo':24}{'type':>9}{'clear':>8}{'unclear':>9}")
+    for (repo, task_type), cell in sorted(data.breakdown.items()):
+        typer.echo(f"  {repo:24}{task_type:>9}{cell[True]:>8}{cell[False]:>9}")
+    typer.echo("\nFAIL_TO_PASS tests per verified task")
+    for bucket, count in data.fail_to_pass_buckets.items():
+        typer.echo(f"  {bucket:>4}: {count}")
     typer.echo(f"\nMedian diff size (verified): {data.median_diff_lines} changed lines")
     typer.echo(f"Median test runtime (verified): {data.median_test_seconds} seconds")
     try:
@@ -166,10 +209,14 @@ def stats() -> None:
     except (DockerUnavailable, FileNotFoundError) as exc:
         typer.echo(f"\nDocker disk usage unavailable: {exc}")
         return
-    typer.echo("\nDocker disk usage")
-    typer.echo(f"  repogym images: {_gb(usage.repogym_bytes)} (upper bound; layers are shared)")
-    budget = "OVER the" if usage.total_bytes > DOCKER_BUDGET_BYTES else "within the"
-    typer.echo(f"  total, all projects: {_gb(usage.total_bytes)} ({budget} 10 GB budget)")
+    budget = "OVER" if usage.repogym_bytes > DOCKER_BUDGET_BYTES else "within"
+    typer.echo(
+        f"\nRepoGym-only Docker disk: {_gb(usage.repogym_bytes)} ({budget} the 10 GB budget)"
+    )
+    typer.echo(f"  images:              {_gb(usage.repogym_image_bytes)}")
+    typer.echo(f"  builder build cache: {_gb(usage.repogym_build_cache_bytes)}")
+    typer.echo(f"  builder (buildkit):  {_gb(usage.builder_image_bytes)}")
+    typer.echo(f"Total Docker disk, all projects: {_gb(usage.total_bytes)}")
     for kind, size in usage.by_type.items():
         typer.echo(f"    {kind}: {_gb(size)}")
 
@@ -180,15 +227,21 @@ def clean(
         bool,
         typer.Option(help="Also remove stopped containers and dangling images of other projects."),
     ] = False,
+    build_cache: Annotated[
+        bool, typer.Option(help="Also prune the repogym-builder build cache (only that builder).")
+    ] = False,
 ) -> None:
     """Remove repogym's stopped containers, dangling images and images no verified task uses."""
     from repogym.env.docker import clean as docker_clean
+    from repogym.env.docker import prune_build_cache
     from repogym.models import VerifiedTask
     from repogym.validate import read_jsonl
 
     keep = {task.docker_image for task in read_jsonl(VERIFIED_PATH, VerifiedTask)}
     for kind, count in docker_clean(keep, other_projects=include_other_projects).items():
         typer.echo(f"Removed {count} {kind}")
+    if build_cache:
+        typer.echo(f"repogym-builder cache: {prune_build_cache()}")
 
 
 if __name__ == "__main__":

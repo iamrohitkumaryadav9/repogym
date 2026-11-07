@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 from collections import Counter
@@ -17,6 +16,7 @@ from pydantic import BaseModel
 
 from repogym.config import (
     BASELINE_PATH,
+    ORACLE_TEST_SECONDS_LIMIT,
     REJECTIONS_PATH,
     RUN_METRICS_PATH,
     VERIFIED_PATH,
@@ -31,10 +31,13 @@ from repogym.models import (
     Rejection,
     RunMetrics,
     RunStage,
+    TaskType,
     TestRun,
     TestStatus,
     VerifiedTask,
 )
+from repogym.spec import check_spec
+from repogym.tasktype import TaskTypeClassifier, classify_task_type
 
 log = structlog.get_logger()
 
@@ -117,6 +120,37 @@ def inconsistent_tests(runs: list[TestRun]) -> list[str]:
     return sorted(t for t in all_ids if len({run.tests.get(t) for run in runs}) > 1)
 
 
+def slow_listed_tests(runs: list[TestRun], lists: Lists, limit: float) -> list[str]:
+    """Listed tests that came within reach of the per-test timeout in some oracle run."""
+    listed = set(lists.fail_to_pass + lists.pass_to_pass)
+    slow = {
+        f"{test} ({run.test_seconds[test]:.1f}s)"
+        for run in runs
+        for test in listed
+        if run.test_seconds.get(test, 0.0) > limit
+    }
+    return sorted(slow)
+
+
+def annotate(
+    candidate: Candidate, classifier: TaskTypeClassifier | None = None
+) -> tuple[TaskType, bool, list[str]]:
+    """task_type, spec_clear and spec_issues for a task. Needs the repo's bare clone."""
+    task_type = classify_task_type(candidate, classifier)
+    try:
+        result = check_spec(
+            get_repo(candidate.repo),
+            candidate.base_commit,
+            candidate.gold_patch,
+            candidate.test_patch,
+            candidate.issue_title,
+            candidate.issue_body,
+        )
+    except Exception as exc:  # noqa: BLE001 - recorded on the task rather than aborting the run
+        return task_type, False, [f"spec check could not run: {type(exc).__name__}: {exc}"]
+    return task_type, result.spec_clear, result.spec_issues
+
+
 def _stage_rejection(label: str, run: TestRun) -> str:
     """Map an incomplete run to a rejection reason."""
     return {
@@ -140,7 +174,12 @@ class Outcome:
 Runner = Callable[..., TestRun]
 
 
-def validate_candidate(candidate: Candidate, runner: Runner = run_tests) -> Outcome:
+Annotator = Callable[[Candidate], tuple[TaskType, bool, list[str]]]
+
+
+def validate_candidate(
+    candidate: Candidate, runner: Runner = run_tests, annotator: Annotator | None = None
+) -> Outcome:
     """Run the checks for one candidate, stopping at the first failure."""
     spec = get_repo(candidate.repo)
     test_files = [path for path in candidate.test_files if is_runnable_test_file(path)]
@@ -205,6 +244,12 @@ def validate_candidate(candidate: Candidate, runner: Runner = run_tests) -> Outc
         return reject("flaky_oracle", f"{len(flaky)} inconsistent: {flaky[:5]}", record)
     if not all(is_solved(item, lists) for item in oracle_runs):
         return reject("check2_oracle_does_not_fix", "Listed test failed in a repeat run", record)
+    slow = slow_listed_tests(oracle_runs, lists, ORACLE_TEST_SECONDS_LIMIT)
+    if slow:
+        detail = f"Over {ORACLE_TEST_SECONDS_LIMIT:.0f}s with the fix: {slow[:5]}"
+        return reject("oracle_too_close_to_timeout", detail, record)
+
+    task_type, spec_clear, spec_issues = (annotator or annotate)(candidate)
 
     verified = VerifiedTask(
         task_id=candidate.task_id,
@@ -217,6 +262,9 @@ def validate_candidate(candidate: Candidate, runner: Runner = run_tests) -> Outc
         fail_to_pass=lists.fail_to_pass,
         pass_to_pass=lists.pass_to_pass,
         docker_image=spec.image,
+        task_type=task_type,
+        spec_clear=spec_clear,
+        spec_issues=spec_issues,
     )
     metrics = RunMetrics(
         task_id=candidate.task_id,
@@ -269,12 +317,27 @@ def read_jsonl(path: Path, model: type[Model]) -> list[Model]:
 
 def forget_rejections(path: Path, reasons: set[str]) -> int:
     """Remove rejections with these reasons so they get re-validated. Returns how many."""
-    rejections = read_jsonl(path, Rejection)
-    keep = [r for r in rejections if r.reason not in reasons]
-    temp = path.with_suffix(".tmp")
-    temp.write_text("".join(json.dumps(r.model_dump()) + "\n" for r in keep), encoding="utf-8")
-    temp.replace(path)
-    return len(rejections) - len(keep)
+    return rewrite_jsonl(path, Rejection, lambda r: r.reason not in reasons)
+
+
+def rewrite_jsonl(path: Path, model: type[Model], keep: Callable[[Model], bool]) -> int:
+    """Atomically rewrite a JSONL file keeping matching records; returns how many were dropped."""
+    records = read_jsonl(path, model)
+    kept = [r for r in records if keep(r)]
+    if path.exists():
+        temp = path.with_suffix(".tmp")
+        temp.write_text("".join(r.model_dump_json() + "\n" for r in kept), encoding="utf-8")
+        temp.replace(path)
+    return len(records) - len(kept)
+
+
+def forget_tasks(task_ids: set[str]) -> int:
+    """Remove every record of these tasks so the next run validates them from scratch."""
+    removed = rewrite_jsonl(VERIFIED_PATH, VerifiedTask, lambda r: r.task_id not in task_ids)
+    removed += rewrite_jsonl(REJECTIONS_PATH, Rejection, lambda r: r.task_id not in task_ids)
+    rewrite_jsonl(BASELINE_PATH, BaselineRecord, lambda r: r.task_id not in task_ids)
+    rewrite_jsonl(RUN_METRICS_PATH, RunMetrics, lambda r: r.task_id not in task_ids)
+    return removed
 
 
 def already_validated() -> set[str]:
@@ -283,7 +346,10 @@ def already_validated() -> set[str]:
 
 
 def validate_all(
-    candidates: list[Candidate], workers: int, runner: Runner = run_tests
+    candidates: list[Candidate],
+    workers: int,
+    runner: Runner = run_tests,
+    annotator: Annotator | None = None,
 ) -> Counter[str]:
     """Validate candidates in parallel, recording each as it finishes.
 
@@ -322,7 +388,7 @@ def validate_all(
                 candidate = next(queue, None)
                 if candidate is None:
                     break
-                active.add(pool.submit(validate_candidate, candidate, runner))
+                active.add(pool.submit(validate_candidate, candidate, runner, annotator))
             if not active:
                 break
             finished, active = wait(active, return_when=FIRST_COMPLETED)
