@@ -29,6 +29,9 @@ dev = ["pytest>=8", "ruff>=0.5"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Integration tests need Docker and the local bare clones; run them with `pytest -m docker`.
+markers = ["docker: needs Docker and data/repos (excluded by default and in CI)"]
+addopts = "-m 'not docker'"
 
 [tool.ruff]
 line-length = 100
