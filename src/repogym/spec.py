@@ -19,6 +19,7 @@ A name is flagged only if all of these hold:
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import subprocess
 import tempfile
@@ -29,8 +30,69 @@ from repogym.config import RepoSpec
 from repogym.mining.patches import is_runnable_test_file, split_diff
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@")
+_DIFF_PATHS = re.compile(r'^diff --git "?a/(?P<a>.*?)"? "?b/(?P<b>.*?)"?$', re.MULTILINE)
 _OPTION = re.compile(r"^--[a-z0-9][a-z0-9-]*$")
 _OPTION_DEFINERS = ("option", "argument", "add_argument", "Option", "Argument")
+
+
+@functools.cache
+def stdlib_names() -> frozenset[str]:
+    """Attribute names of builtins and stdlib modules that tests commonly touch.
+
+    A test calling ``", ".join(...)`` or ``tmp_path.mkdir(parents=True)`` is not using a new
+    library API, even if the fix happens to contain the same word.
+    """
+    import builtins
+    import collections
+    import contextlib
+    import copy
+    import dataclasses
+    import datetime
+    import enum
+    import functools as functools_module
+    import inspect
+    import io
+    import itertools
+    import json
+    import logging
+    import operator
+    import os
+    import pathlib
+    import pdb
+    import shutil
+    import signal
+    import string
+    import subprocess
+    import sys
+    import tempfile
+    import textwrap
+    import threading
+    import time
+    import traceback
+    import types
+    import typing
+    import unittest.mock
+    import warnings
+
+    objects: list[object] = [
+        builtins, str, bytes, list, dict, set, frozenset, tuple, int, float, object, type,
+        BaseException, collections, contextlib, dataclasses, enum, functools_module, inspect, io,
+        io.StringIO, io.BytesIO, io.TextIOWrapper, itertools, json, os, os.path, pathlib,
+        pathlib.Path, re, re.compile(""), re.match("", ""), shutil, subprocess,
+        subprocess.CompletedProcess, sys, tempfile, textwrap, typing, unittest.mock,
+        unittest.mock.MagicMock(), warnings, copy, datetime, datetime.datetime, logging, operator,
+        pdb, signal, string, threading, time, traceback, types,
+    ]  # fmt: skip
+    try:
+        import pytest
+
+        objects += [pytest, pytest.MonkeyPatch, pytest.CaptureFixture]
+    except ImportError:  # pragma: no cover - pytest is a dev dependency
+        pass
+    names: set[str] = set()
+    for obj in objects:
+        names.update(dir(obj))
+    return frozenset(names)
 
 
 def added_line_numbers(file_patch: str) -> set[int]:
@@ -104,6 +166,7 @@ class Reference:
     name: str
     path: str
     line: int
+    callee: str = ""  # for keywords: the called function's name
 
     def describe(self) -> str:
         return f"{self.kind} `{self.name}` ({self.path}:{self.line})"
@@ -136,7 +199,11 @@ def referenced_names(
         elif isinstance(node, ast.Attribute):
             refs.append(Reference("attribute", node.attr, path, line))
         elif isinstance(node, ast.Call):
-            refs += [Reference("keyword", k.arg, path, line) for k in node.keywords if k.arg]
+            func = node.func
+            callee = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            refs += [
+                Reference("keyword", k.arg, path, line, callee) for k in node.keywords if k.arg
+            ]
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             if _OPTION.match(node.value) and id(node) not in option_definitions:
                 refs.append(Reference("cli_option", node.value, path, line))
@@ -175,6 +242,14 @@ def find_spec_issues(
                 continue
         else:
             if ref.name in base_source.names or ref.name in tests_defined.names:
+                continue
+            if ref.kind == "attribute" and ref.name in stdlib_names():
+                continue
+            if (
+                ref.kind == "keyword"
+                and ref.callee in stdlib_names()
+                and ref.callee not in base_source.names
+            ):
                 continue
             if not _mentioned(ref.name, gold_added_text):
                 continue
@@ -228,14 +303,17 @@ def source_files_at(spec: RepoSpec, commit: str) -> dict[str, str]:
 def patched_test_files(spec: RepoSpec, commit: str, test_patch: str) -> dict[str, str]:
     """Touched test files after ``test_patch``, applied with plain ``git apply`` in a temp dir."""
     paths = [f.path for f in split_diff(test_patch) if f.path.endswith(".py") and not f.is_deleted]
+    # Deleted files and rename sources must exist too, or git apply refuses the whole patch.
+    old_paths = [m["a"] for m in _DIFF_PATHS.finditer(test_patch) if m["a"].endswith(".py")]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for path, text in read_files(spec, commit, paths).items():
+        for path, text in read_files(spec, commit, sorted({*paths, *old_paths})).items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
         subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", "-"],
+            # Only the Python files were materialised; skip data and yaml files in the patch.
+            ["git", "apply", "--whitespace=nowarn", "--include=*.py", "-"],
             cwd=root,
             input=test_patch,
             text=True,

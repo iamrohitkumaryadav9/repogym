@@ -212,3 +212,59 @@ def test_classifier_hook_only_runs_when_labels_are_inconclusive():
     labelled = unlabelled.model_copy(update={"pr_labels": ["bug"]})
     assert classify_task_type(labelled, classifier) == "bug"
     assert calls == [unlabelled.task_id]
+
+
+def test_stdlib_attributes_and_keywords_are_not_new_api():
+    refs = [
+        Reference("attribute", "join", "t.py", 1),
+        Reference("attribute", "TextIOWrapper", "t.py", 2),
+        Reference("keyword", "parents", "t.py", 3, callee="mkdir"),
+    ]
+    gold = "x = ', '.join(parts)\nio.TextIOWrapper(b)\np.mkdir(parents=True)"
+    assert find_spec_issues(refs, Defined(), Defined(), gold, "") == []
+
+
+def test_keyword_to_a_library_function_sharing_a_stdlib_name_is_still_checked():
+    refs = [Reference("keyword", "colour", "t.py", 1, callee="open")]
+    base = Defined(names={"open"})  # the library defines its own open()
+    assert find_spec_issues(refs, base, Defined(), "def open(colour=None): ...", "") != []
+
+
+def test_check_spec_ignores_non_python_files_in_the_test_patch(tiny_repo):
+    spec, sha = tiny_repo
+    patch = TEST_PATCH + (
+        "diff --git a/tests/data.yml b/tests/data.yml\n"
+        "--- a/tests/data.yml\n+++ b/tests/data.yml\n@@ -1 +1 @@\n-a: 1\n+a: 2\n"
+    )
+    result = check_spec(spec, sha, GOLD_PATCH, patch, "old() is wrong", "")
+    assert any("`shiny_new`" in issue for issue in result.spec_issues)
+
+
+def test_pytest_and_debugger_names_are_not_new_api():
+    refs = [Reference("attribute", "raises", "t.py", 1), Reference("attribute", "Pdb", "t.py", 2)]
+    assert find_spec_issues(refs, Defined(), Defined(), "raises\nPdb", "") == []
+
+
+DELETE_AND_ADD_PATCH = """\
+diff --git a/tests/test_core.py b/tests/test_core.py
+deleted file mode 100644
+--- a/tests/test_core.py
++++ /dev/null
+@@ -1 +0,0 @@
+-from pkg.core import old
+diff --git a/tests/test_new.py b/tests/test_new.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_new.py
+@@ -0,0 +1,3 @@
++from pkg.core import old, shiny_new
++def test_new():
++    assert shiny_new() == old()
+"""
+
+
+def test_check_spec_handles_deleted_test_files(tiny_repo):
+    """git apply needs the old file present to delete it; otherwise the whole check fails."""
+    spec, sha = tiny_repo
+    result = check_spec(spec, sha, GOLD_PATCH, DELETE_AND_ADD_PATCH, "old() is wrong", "")
+    assert [issue.split(" (")[0] for issue in result.spec_issues] == ["import `shiny_new`"]
