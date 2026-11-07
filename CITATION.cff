@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use RepoGym, please cite it as below."
+type: software
+title: "RepoGym: a verified RL environment and evaluation harness for coding agents built from real GitHub pull requests"
+version: 0.1.0
+date-released: 2026-11-07
+authors:
+  - family-names: Yadav
+    given-names: Rohit Kumar
+repository-code: "https://github.com/iamrohitkumaryadav9/repogym"
+url: "https://github.com/iamrohitkumaryadav9/repogym"
+license: MIT
+keywords:
+  - reinforcement learning
+  - coding agents
+  - evaluation
+  - software engineering benchmark
