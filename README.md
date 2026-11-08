@@ -324,23 +324,60 @@ writable root stays, with the disk budget.
 
 ### Baseline LLM agent (smoke test only)
 
-The baseline is a bash-only agent in the style of mini-swe-agent: one command per turn, with
-the linear history as the trajectory. It runs `gemini-3.5-flash-lite` through RepoGym's
-provider layer (same retries, backoff and finishReason rules as the classifier; an
-OpenAI-compatible provider is one small module). Three dev tasks from three repos (none `history_recoverable`), run on
-commit `5a2c635`. This was a wiring check only; full evaluations are Week 3:
+The baseline is a bash-only agent in the style of mini-swe-agent: one command per turn, with the
+linear history as the trajectory. It runs `gemini-3.5-flash-lite` (free tier, no billing
+account) through RepoGym's provider layer, with the same retries, backoff and finishReason rules
+as the classifier. An OpenAI-compatible provider is one small module. This is a wiring check on
+three dev tasks from three repos, none `history_recoverable`; full evaluations are Week 3. The
+runs used commit `45b6e15`, ran sequentially, and recorded `api_tier: free`.
 
-| Task | Reward | Steps | Ended by | Prompt / completion tokens | Wall time | Flags (recomputed with current code) |
-|---|---|---|---|---|---|---|
-| PyCQA/isort-2683 | **1** (FAIL_TO_PASS 8/8) | 46 | submit | 584,169 / 7,796 | 395 s | `network_errors_in_output` (from isort's own tests) |
-| pallets/click-3507 | 0 (FAIL_TO_PASS 0/2) | 49 | submit | 444,017 / 7,365 | 328 s | `files_outside_repo` (click's tests write `/tmp/editor-*.txt~`) |
-| python-poetry/tomlkit-537 | 0 (FAIL_TO_PASS 0/1) | 100 | step budget | 1,200,419 / 9,083 | 617 s | `budget_exhausted` |
+| Task | Reward | FAIL_TO_PASS | Steps | Ended by | Prompt / completion tokens | Wall time | Flags |
+|---|---|---|---|---|---|---|---|
+| PyCQA/isort-2683 | **1** | 8/8 | 88 | submit | 2,181,995 / 18,637 | 1112 s | `network_errors_in_output` (from isort's own tests) |
+| pallets/click-3507 | 0 | 1/2 | 60 | submit | 759,123 / 9,842 | 745 s | `test_files_edited` (reverted before grading), `files_outside_repo` (click's tests write to `/tmp`) |
+| python-poetry/tomlkit-537 | 0 | 0/1 | 100 | step budget | 1,043,178 / 7,459 | 1204 s | `budget_exhausted` |
 
-Cost was $0, on the free tier. Format errors, which count as steps, occurred 4, 2 and 3 times.
-The smoke test found two harness problems, both fixed before the clean runs above. The leak
-detector counted the agent's own edits, echoed back by `git diff`, as leaks. And network errors
-printed by a test suite counted as the agent's own network attempts; they're now
-`network_errors_in_output`.
+Cost was $0, on the free tier. Format errors, which count as steps, occurred 8, 10 and 1 times.
+There were no 429s; the only retry was one 503.
+
+**Compared with the first smoke test** (commit `5a2c635`, same tasks, same model, temperature
+0), the rewards are the same, 1 / 0 / 0. The trajectories differ:
+* isort-2683 took 88 steps instead of 46;
+* click-3507 got 1/2 FAIL_TO_PASS instead of 0/2, and this time the agent edited a test file,
+  which was reverted;
+* tomlkit-537 again ran out of steps.
+
+Temperature 0 isn't deterministic on Gemini (Week 1 measured the same thing for the
+classifier), so differences like these are expected. They are shown here, not smoothed over.
+
+**Commits and rate-limit history.** The scripted-agent evidence above is from `ac4a173`. The
+baseline is from `45b6e15`. Between them, `src/` gained:
+* the 12 s throttle and `retryDelay` handling (`llm.py`, `agents/models.py`,
+  `agents/baseline.py`);
+* api-tier and quota-id provenance (`harness.py`, `cli.py`);
+* the standalone OpenEnv adapter (`openenv_adapter.py`), which the run path doesn't import.
+
+That's 6 files changed, 299 insertions and 4 deletions. Nothing that sets up, runs or grades an
+episode changed.
+
+The baseline was first rerun on `ac4a173` with a throttle of one request per 6 s:
+* click-3507 completed;
+* two episodes hit the free tier's **daily** request cap (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`);
+* one hit its **per-minute** limits late in a long episode, after 28 HTTP 429s.
+
+Late-episode calls send about 10–15k prompt tokens, because the history is linear. So the
+throttle went to one request per 12 s, and the client now waits at least as long as a 429's
+`retryDelay` asks. A delay over 120 s, such as a daily cap, fails at once.
+
+Separately, two attempts failed because the API key was rejected: HTTP 400 `API_KEY_INVALID`,
+then HTTP 401 `ACCOUNT_STATE_INVALID` while the key's service account was disabled. Each of
+these failures is kept as history, recorded as `agent_error` and never as a reward:
+* `data/runs/clean3-smoke-baseline/episodes.quota_errors.jsonl`;
+* `data/runs/clean3-smoke-baseline/episodes.api_errors.jsonl`;
+* `data/runs/clean4-smoke-baseline/episodes.api_errors.jsonl`.
+
+The `ac4a173` click-3507 episode is kept in `data/runs/clean3-smoke-baseline/`. Context
+management and prompt caching to cut per-call tokens are planned for Week 3.
 
 ### Commands
 
