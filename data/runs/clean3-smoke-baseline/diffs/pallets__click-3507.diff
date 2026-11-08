@@ -1,0 +1,39 @@
+diff --git a/src/click/core.py b/src/click/core.py
+index f104fee..78f699f 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -1626,7 +1626,11 @@ class Group(Command):
+             if chain:
+                 subcommand_metavar = "COMMAND1 [ARGS]... [COMMAND2 [ARGS]...]..."
+             else:
+-                subcommand_metavar = "COMMAND [ARGS]..."
++                subcommand_metavar = (
++                    "[COMMAND] [ARGS]..."
++                    if invoke_without_command
++                    else "COMMAND [ARGS]..."
++                )
+ 
+         self.subcommand_metavar = subcommand_metavar
+         self.chain = chain
+diff --git a/tests/test_commands.py b/tests/test_commands.py
+index c3f0020..148c99c 100644
+--- a/tests/test_commands.py
++++ b/tests/test_commands.py
+@@ -621,3 +621,17 @@ def test_suggest_possible_commands(runner, value, expect):
+ 
+     result = runner.invoke(cli, [value])
+     assert expect in result.output
++
++
++def test_invoke_without_command_help(runner):
++    @click.group(invoke_without_command=True)
++    def cli():
++        pass
++
++    @cli.command()
++    def sub():
++        pass
++
++    result = runner.invoke(cli, ["--help"])
++    assert not result.exception
++    assert "Usage: cli [OPTIONS] [COMMAND] [ARGS]..." in result.output
