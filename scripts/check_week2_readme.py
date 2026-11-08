@@ -27,7 +27,7 @@ EVIDENCE = {
     "all-oracle": "clean3-all-oracle",
     "all-null": "clean3-all-null",
     "test-cheater": "clean3-test-cheater",
-    "baseline": "clean3-smoke-baseline",
+    "baseline": "clean4-smoke-baseline",
 }
 
 
@@ -49,11 +49,15 @@ def main() -> int:
         if snippet not in text:
             problems.append(f"README lacks {snippet!r} ({why})")
 
-    commits, dirty = set(), set()
+    commits: dict[str, set[str]] = {"scripted": set(), "baseline": set()}
+    dirty = set()
     for key, run in EVIDENCE.items():
         rs = records(run)
-        commits |= {r["repogym_commit"] for r in rs}
+        group = "baseline" if key == "baseline" else "scripted"
+        commits[group] |= {r["repogym_commit"] for r in rs}
         dirty |= {r["repogym_dirty"] for r in rs}
+        if key == "baseline" and {r.get("api_tier") for r in rs} != {"free"}:
+            problems.append("baseline episodes don't all record api_tier=free")
         if any(r["status"] != "graded" for r in rs):
             problems.append(f"{run}: not every episode graded")
         agent = key.split("-")[-1]
@@ -127,18 +131,23 @@ def main() -> int:
             if f"`{flag}`" not in line:
                 problems.append(f"baseline {r['task_id']}: flag {flag} not in its README row")
 
-    if len(commits) != 1 or dirty != {False}:
-        problems.append(f"evidence not from one clean commit: commits={commits} dirty={dirty}")
-    else:
-        need(f"`{next(iter(commits))[:7]}`", "the evidence commit")
+    if dirty != {False}:
+        problems.append("some evidence episode ran on a dirty tree")
+    for group, found in commits.items():
+        if len(found) != 1:
+            problems.append(f"{group} evidence not from one commit: {found}")
+        else:
+            need(f"`{next(iter(found))[:7]}`", f"the {group} evidence commit")
 
     for p in problems:
         print("FAIL", p)
     oracle_flags = Counter(f for r in oracle_all for f in r["flags_raised"])
     if not problems:
         print(
-            f"OK: README Week 2 numbers match data/runs; one clean commit "
-            f"{next(iter(commits))[:7]}; {sum(len(records(r)) for r in EVIDENCE.values())} "
+            f"OK: README Week 2 numbers match data/runs; scripted agents on "
+            f"{next(iter(commits['scripted']))[:7]}, baseline on "
+            f"{next(iter(commits['baseline']))[:7]}, all clean; "
+            f"{sum(len(records(r)) for r in EVIDENCE.values())} "
             f"episodes; all-247 oracle flags: {dict(oracle_flags)}"
         )
     return 1 if problems else 0
