@@ -1,6 +1,20 @@
 # Week 2 design: agent environment, tools, grading and trajectories
 
-Status: **draft for review**. Nothing here is implemented yet.
+Status: **implemented, Week 2 complete** (2026-11-08). §0–§11 are the design as first reviewed.
+§12–§15 record the review decisions and what implementation and the evidence runs changed.
+Where they differ from §0–§11, §12–§15 win. Results are in the README's "Week 2: Environment
+and harness" section; the evidence is in `data/runs/`.
+
+| Decision | Final state | Where |
+|---|---|---|
+| D1 MCP server location | On the host; tools run via `docker exec` as the non-root `agent` user; file tools refuse paths outside `/work`, symlinks included. Built on `mcp` 2.3.0 | §12, §13 |
+| D2 Grading container | Fresh container with validation's own runner and test-file selection; diff extracted on the host from a `docker cp`, never via the agent's git | §5, §12, §13 |
+| D3 Revert scope | test_patch paths plus every test file, `conftest.py`, pytest config, `sitecustomize`/`.pth`, and shadowing modules in import roots. Non-test reverts are flagged. A single conftest hook gets reward 1 on 25/25 dev tasks with the test_patch-only rule, 0/25 with D3 | §12, §13 |
+| D4 Model layer | Own `ChatModel` layer reusing the audited Gemini client; an OpenAI-compatible provider is one small class | §9, §12 |
+| D5 ATIF | v1.8; our validator in CI; Harbor 0.24.0's validator accepts our trajectories | §7, §13 |
+| D6 Gold probe | Fail only on an exact fix in history (0 tasks); past-history overlap recorded; `history_recoverable` = click-3239; leak detector counts only future lines the agent didn't write | §14 |
+| D7 Disk | Writable root, 2 GB disk budget, 1 GiB per-file limit; read-only root evaluated and rejected | §13, §14 |
+| OpenEnv | Dependency-free adapter mirroring openenv-core 0.3.0, conformance-checked | §15 |
 
 This document describes how a verified task from `data/release/v0.1/tasks.jsonl` becomes a
 sandboxed episode. An agent works on the task through tools, and the result is a graded,
