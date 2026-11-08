@@ -1,0 +1,255 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-all-null",
+ "trajectory_id": "f3125c23a9290689",
+ "agent": {
+  "name": "repogym-null",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-08T03:29:10.630Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-08T03:29:10.630Z",
+   "source": "user",
+   "message": "# Sorting a literal drops a trailing comment, and raises if the comment contains \"=\"\n\nSorting a literal rebuilds it from its parsed value, so anything written after the value on that line is not carried over. Two separate symptoms, both on `main` at `131f4adc` and both independent of any open PR.\n\n### 1. A trailing comment is silently deleted\n\n```python\n>>> isort.code('__all__ = [\"b\", \"a\"]  # noqa: F401\\n\\nx = 1\\n', sort_reexports=True)\n'__all__ = [\"a\", \"b\"]\\n\\nx = 1\\n'\n```\n\nThe same happens through `# isort: list`, so it is the shared literal path rather than the reexport path:\n\n```python\n>>> isort.code('# isort: list\\n__all__ = [\"b\", \"a\"]  # exports\\n\\nx = 1\\n')\n'# isort: list\\n__all__ = [\"a\", \"b\"]\\n\\nx = 1\\n'\n```\n\nA dropped comment on `__all__` is usually a directive, which makes this more than cosmetic:\n\n| input | result |\n|---|---|\n| `# noqa: F401` | removed, so the lint error it suppressed comes back |\n| `# type: ignore` | removed, so a previously clean mypy run can start failing |\n\nThe file still runs, and nothing is reported, so it surfaces later as a CI failure in an unrelated job.\n\n### 2. A trailing comment containing `=` raises\n\n```python\n>>> isort.code('# isort: list\\n__all__ = [\"b\", \"a\"]  # pylint: disable=invalid-name\\n\\nx = 1\\n')\nValueError: too many values to unpack (expected 2)\n```\n\n`isort/literal.py:42` splits the whole section on every `=`:\n\n```python\nvariable_name, literal = code.split(\"=\")\n```\n\nso a second `=` anywhere on the line, including inside a comment, breaks the unpack. `# pylint: disable=...`, `# type: ignore[assignment]` with a default, or a URL in a comment all reach it. `code.split(\"=\", 1)` fixes this half.\n\n### Notes\n\nFound while working on #2627, which fixes a different failure on the same seam (a statement or standalone comment following the literal). Both cases above are unchanged by that PR, in either direction, so this is a separate report rather than a review comment.\n\n@Manny7717 offered to look at the trailing-comment case if it were filed.\n\nReproduced on `main` at `131f4adc`, CPython 3.13.\n\n---\nAI-assisted: written with Claude Code, reproduced and tested by me before filing."
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-08T03:29:10.630Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 3,
+  "extra": {
+   "repogym": {
+    "reward": 0,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 0,
+     "fail_to_pass_passed": 0,
+     "fail_to_pass_total": 7,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 261,
+     "fail_to_pass_failed": [
+      "tests.unit.test_isort::test_isort_list_keeps_trailing_comment_with_equals",
+      "tests.unit.test_isort::test_reexport_keeps_trailing_comment",
+      "tests.unit.test_isort::test_reexport_keeps_trailing_comment_with_equals",
+      "tests.unit.test_literal::test_literal_with_equals_in_string_sorts",
+      "tests.unit.test_literal::test_trailing_comment_is_preserved",
+      "tests.unit.test_literal::test_trailing_comment_on_multiline_literal_is_preserved",
+      "tests.unit.test_literal::test_trailing_comment_with_equals_is_preserved"
+     ],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 0,
+     "error": "",
+     "peak_memory_bytes": 87445504,
+     "seconds": 7.7
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "PyCQA__isort-2647",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "f3125c23a9290689",
+   "image_digest": "sha256:35a2484b9aff69959407f3d21388bad41f5f463ef07d223eb533271a7b6c30e9",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

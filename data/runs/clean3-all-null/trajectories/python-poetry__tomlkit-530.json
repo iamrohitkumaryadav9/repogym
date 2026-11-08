@@ -1,0 +1,250 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-all-null",
+ "trajectory_id": "1abdd4f64c4261ff",
+ "agent": {
+  "name": "repogym-null",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-08T03:20:43.200Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-08T03:20:43.200Z",
+   "source": "user",
+   "message": "# Out-of-order value-vs-table redefinition parses OK and only raises on access (should reject at parse)\n\n## Summary\n\nAn **out-of-order value-vs-table redefinition** is invalid TOML, but `tomlkit.parse()` accepts it and the conflict only surfaces **lazily on first access** (raising `KeyAlreadyPresent`), instead of failing at parse time. The equivalent **in-order** document is correctly rejected at parse. Both are invalid per the TOML spec and per stdlib `tomllib`.\n\n## Minimal repro\n\n```python\nimport tomlkit, tomllib\n\nsrc = '[a]\\nb = true\\n[zz]\\n[a.b]\\nc = 1\\n'   # the splitter table [zz] may be empty\n\ndoc = tomlkit.parse(src)   # -> OK, no exception   (BUG: should raise here)\n\ndoc.unwrap()               # -> raises KeyAlreadyPresent: Key \"b\" already exists.\ndoc['a']                   # -> same raise (also .get('a'), 'a' in doc, dict(doc))\ndoc.value                  # -> SUCCEEDS but silently drops b=true:\n                           #    {'a': {'b': {'c': 1}}, 'zz': {}}\n\n# In-order twin is correctly rejected at parse:\ntomlkit.parse('[a]\\nb = true\\n[a.b]\\nc = 1\\n')   # -> raises KeyAlreadyPresent AT PARSE\n\n# Stdlib oracle agrees the input is invalid TOML:\ntomllib.loads(src)         # -> tomllib.TOMLDecodeError: Cannot overwrite a value\n```\n\n## Expected vs actual\n\n- **Expected:** `tomlkit.parse(src)` raises a `TOMLKitError` (e.g. `ParseError` / `KeyAlreadyPresent`) at **parse time**, matching the in-order form and `tomllib`.\n- **Actual:** `parse()` returns a document that looks healthy (`len(doc) == 2`, `list(doc.keys()) == ['a', 'zz']`, `doc.as_string()` round-trips byte-for-byte), but materializing key `a` raises `KeyAlreadyPresent('Key \"b\" already exists.')`. The raise is deterministic on every access (no caching of a good value).\n\n## Two failure modes from one defect\n\n1. **Value-then-table split** (above): `parse()` OK, then **raise on access**.\n2. **Dotted-key-then-table split** — *strictly worse, a silent false-accept*:\n   ```python\n   doc = tomlkit.parse('[a]\\nb.c = 1\\n[zz]\\nq = 9\\n[a.b]\\nd = 2\\n')\n   doc.unwrap()   # NO error; silently merges to {'a': {'b': {'c': 1, 'd': 2}}, ...}\n   # tomllib rejects this: \"Cannot declare (a, b) twice\"\n   ```\n\n**Accessor divergence** on the same conflicting document: `doc.unwrap()`, `doc['a']`, `doc.get('a')`, `'a' in doc`, `dict(doc)` all **raise**, while `doc.value` **succeeds with silent data loss** (drops `b = true`).\n\n## Why it happens (root cause)\n\nThe in-order path raises synchronously in `Container.append` (the `isinstance(item, Table)` / `not isinstance(current, (Table, AoT))` branch). On the out-of-order path, the existing entry for `a` is a **concrete** table and the new entry is a **super**-table wrapper for `[a.b]`. In `Container.append` the out-of-order validation (`_validate_out_of_order_table`, `_validate_table_candidate`) lives **only inside the `current.is_super_table()` branch**; because `current` here is concrete, that whole block is skipped, no validation runs, and the unvalidated out-of-order tuple is recorded. The clash is then only discovered when `OutOfOrderTableProxy` materializes that tuple (terminal raise `if not isinstance(current, Table): raise KeyAlreadyPresent(key)` in `Container._raw_append`) — i.e. at access, not parse.\n\n## Spec & conformance\n\n- TOML **v1.0.0 and v1.1.0** both state: *\"Like keys, you cannot define a table more than once. Doing so is invalid.\"* with the canonical `[fruit]` / `[fruit.apple]` example — exactly this value-then-table-reopen shape.\n- `toml-test` ships the in-order twin as `invalid/table/redefine-01.toml` (`[a]` / `b = 1` / `[a.b]` / `c = 2`), and its contract requires decoders to **reject** invalid fixtures. There is no out-of-order (intervening-table) variant in the suite, so this exact permutation isn't exercised.\n- tomlkit's own suite already encodes parse-time rejection: `tests/test_toml_tests.py` runs the whole `invalid/` suite under `pytest.raises(TOMLKitError)` on `parse()`, and `tests/test_api.py::test_parse_rejects_collisions_across_out_of_order_fragments` (#479) demands a parse-time error for out-of-order collisions — but only for **table-vs-table** fragments, leaving **value-vs-table** out-of-order uncovered.\n\n`KeyAlreadyPresent` is already a `TOMLKitError` subclass, so raising it at parse needs no new exception type — the fix is about **when** it raises (parse, not access).\n\n## Suggested fix direction\n\nValidate the out-of-order *concrete-existing + super-new* (and *dotted-value + super-new*) cases during parse so invalid documents fail at `parse()`, consistent with the in-order path and with the project's recent direction (#509 \"collisions across fragments still raise at parse time\"; #516 \"reject a table redefined after its parent table header\").\n\n## Related\n\n- #505 (open) — `KeyAlreadyPresent` accessing an out-of-order document; AoT-flavored twin of this, same `OutOfOrderTableProxy` construction path. Open fix PR #507.\n- #261 (open) / #498 (open PR) — out-of-order AoT rejected by the parser.\n- #437 (open) — interleaved AoT.\n- #509, #516 (merged) — project policy that out-of-order collisions are a parse-time concern.\n\n**Environment:** tomlkit 0.15.0 (also reproduces under 0.14.0 per #505); cross-checked against stdlib `tomllib`."
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-08T03:20:43.200Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 3,
+  "extra": {
+   "repogym": {
+    "reward": 0,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 0,
+     "fail_to_pass_passed": 0,
+     "fail_to_pass_total": 2,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 62,
+     "fail_to_pass_failed": [
+      "tests.test_toml_document::test_reject_out_of_order_dotted_key_redefinition_at_parse",
+      "tests.test_toml_document::test_unwrap_preserves_raise_on_invalid_out_of_order_fragment"
+     ],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 0,
+     "error": "",
+     "peak_memory_bytes": 75849728,
+     "seconds": 4.3
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "python-poetry__tomlkit-530",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "1abdd4f64c4261ff",
+   "image_digest": "sha256:c4632c7bae6dfd77076b4706a78ca49a888242e76994338be39f25f98016923d",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

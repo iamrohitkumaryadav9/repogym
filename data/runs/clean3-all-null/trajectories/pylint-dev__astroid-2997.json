@@ -1,0 +1,249 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-all-null",
+ "trajectory_id": "a06067659cb6f867",
+ "agent": {
+  "name": "repogym-null",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-08T03:09:32.021Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-08T03:09:32.021Z",
+   "source": "user",
+   "message": "# crash: `AttributeError: 'AnnAssign' object has no attribute 'name'.`\n\n### Bug description\n\nWhen parsing a file containing a generic class that inherits from a base class with a property, and the child class redeclares an attribute with a type annotation (`AnnAssign`), and then uses `getattr` to access the parent property's `fset`, `pylint` crashes with an `AstroidError`.\n\nThe traceback below was produced with the following ``a.py``:\n\n```python\nfrom typing import TypeVar, Generic\n\nT = TypeVar('T')\n\nclass Base:\n    _x: object  # type hint in base\n    \n    @property\n    def x(self):\n        return self._x\n    \n    @x.setter\n    def x(self, val):\n        self._x = val\n\n\nclass Child(Base, Generic[T]):  # multiple inheritance with Generic\n    _x: T  # Redeclare with type var\n    \n    def __init__(self, val: T):\n        super().__init__()\n        self._x = val\n    \n    @property\n    def x(self) -> T:\n        return self._x\n    \n    @x.setter\n    def x(self, val):\n        setter = getattr(Base.x, \"fset\", None)\n        if setter is not None:\n            setter(self, val)\n\n\nobj = Child(42)\n\n```\n\nThe crash occurs when analyzing the `if` statement that checks the result of `getattr(Base.x, \"fset\", None)`. The inference process eventually leads to `find_setter` in astroid's `objectmodel`, which assumes it will only find `FunctionDef` nodes when looking for the property's setter, but encounters an `AnnAssign` node (from the child class's type annotation) and fails when trying to access its `.name` attribute.\n\nAn `AnnAssign` node represents an annotated assignment statement in Python's AST, such as `_x: T` (a variable declaration with a type hint but no assignment). This is distinct from a regular `Assign` node which would be `_x = value`.\n\nThe crash occurs in `astroid/interpreter/objectmodel.py` in the find_setter function (lines 979-984):\n\n```python\nfor target in [\n    t for t in func.parent.get_children() if t.name == func.function.name\n]:\n    for dec_name in target.decoratornames():\n        if dec_name.endswith(func.function.name + \".setter\"):\n            return target\n```\n\nWhen analyzing a property access in a subclass, `func.parent.get_children()` returns an `AnnAssign` node (from the child class's type hint `_x: T`) along with the expected `FunctionDef` nodes. The code assumes all nodes in this iteration have a `.name` attribute, but `AnnAssign` nodes do not, causing an `AttributeError`.\n\nThe crash is triggered by a combination of factors:\n\n- a base class with a property that has a setter\n\n- a child class that:\n\n  - inherits from `Generic[T]` (making it a generic class)\n\n  - redeclares an attribute with a type annotation (`_x: T`) - this creates an `AnnAssign` node\n\n  - overrides the property and its setter\n\n  - uses `getattr(Base.x, \"fset\", None)` in the setter\n\n  - has an `if` statement checking the result of this `getattr` call\n\nWhen pylint's `visit_if` analyzes this if statement, it calls `safe_infer` on the condition, which triggers a chain of inferences leading to the `find_setter` function. The presence of the `AnnAssign` node in the class body causes the crash.\n\n### Command used\n\n```shell\npylint a.py\n```\n\n### Pylint output\n\n<details open>\n    <summary>\n        pylint crashed with a ``AstroidError`` and with the following stacktrace:\n    </summary>\n\n```python\nTraceback (most recent call last):\n  File \"/usr/lib/python3.14/site-packages/pylint/checkers/utils.py\", line 1369, in safe_infer\n    value = next(infer_gen)\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/node_ng.py\", line 166, in infer\n    for i, result in enumerate(self._infer(context=context, **kwargs)):\n                     ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/node_classes.py\", line 1933, in _infer\n    lhs = list(left_node.infer(context=context))\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/node_ng.py\", line 166, in infer\n    for i, result in enumerate(self._infer(context=context, **kwargs)):\n                     ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/decorators.py\", line 81, in inner\n    yield next(generator)\n          ~~~~^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/decorators.py\", line 44, in wrapped\n    for res in _func(node, context, **kwargs):\n               ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/bases.py\", line 185, in _infer_stmts\n    for inf in stmt.infer(context=context):\n               ~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/node_ng.py\", line 166, in infer\n    for i, result in enumerate(self._infer(context=context, **kwargs)):\n                     ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/decorators.py\", line 81, in inner\n    yield next(generator)\n          ~~~~^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/decorators.py\", line 44, in wrapped\n    for res in _func(node, context, **kwargs):\n               ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/bases.py\", line 185, in _infer_stmts\n    for inf in stmt.infer(context=context):\n               ~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/node_ng.py\", line 145, in infer\n    for result in self._explicit_inference(\n                  ~~~~~~~~~~~~~~~~~~~~~~~~^\n        self,  # type: ignore[arg-type]\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        context,\n        ^^^^^^^^\n        **kwargs,\n        ^^^^^^^^^\n    ):\n    ^\n  File \"/usr/lib/python3.14/site-packages/astroid/inference_tip.py\", line 70, in inner\n    raise e from None\n  File \"/usr/lib/python3.14/site-packages/astroid/inference_tip.py\", line 66, in inner\n    func(node, context, **kwargs)\n    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/brain/brain_builtin_inference.py\", line 204, in _transform_wrapper\n    result = transform(node, context=context)\n  File \"/usr/lib/python3.14/site-packages/astroid/brain/brain_builtin_inference.py\", line 549, in infer_getattr\n    return next(obj.igetattr(attr, context=context))\n                ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/scoped_nodes/scoped_nodes.py\", line 1429, in igetattr\n    return bases._infer_stmts(self.getattr(name, context), context, frame=self)\n                              ~~~~~~~~~~~~^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/nodes/scoped_nodes/scoped_nodes.py\", line 1308, in getattr\n    found_attrs.append(self.special_attributes.lookup(name))\n                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/usr/lib/python3.14/site-packages/astroid/interpreter/objectmodel.py\", line 132, in lookup\n    return getattr(self, IMPL_PREFIX + name)\n  File \"/usr/lib/python3.14/site-packages/astroid/interpreter/objectmodel.py\", line 987, in attr_fset\n    func_setter = find_setter(func)\n  File \"/usr/lib/python3.14/site-packages/astroid/interpreter/objectmodel.py\", line 980, in find_setter\n    t for t in func.parent.get_children() if t.name == func.function.name\n                                             ^^^^^^\nAttributeError: 'AnnAssign' object has no attribute 'name'. Did you mean: 'frame'?\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/usr/lib/python3.14/site-packages/pylint/lint/pylinter.py\", line 821, in _lint_file\n    check_astroid_module(module)\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/lint/pylinter.py\", line 1053, in check_astroid_module\n    retval = self._check_astroid_module(\n        ast_node, walker, rawcheckers, tokencheckers\n    )\n  File \"/usr/lib/python3.14/site-packages/pylint/lint/pylinter.py\", line 1105, in _check_astroid_module\n    walker.walk(node)\n    ~~~~~~~~~~~^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/utils/ast_walker.py\", line 90, in walk\n    self.walk(child)\n    ~~~~~~~~~^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/utils/ast_walker.py\", line 90, in walk\n    self.walk(child)\n    ~~~~~~~~~^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/utils/ast_walker.py\", line 90, in walk\n    self.walk(child)\n    ~~~~~~~~~^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/utils/ast_walker.py\", line 87, in walk\n    callback(astroid)\n    ~~~~~~~~^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/checkers/base/basic_checker.py\", line 287, in visit_if\n    self._check_using_constant_test(node, node.test)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/checkers/base/basic_checker.py\", line 334, in _check_using_constant_test\n    inferred = utils.safe_infer(test)\n  File \"/usr/lib/python3.14/site-packages/pylint/checkers/utils.py\", line 1373, in safe_infer\n    raise AstroidError from e\nastroid.exceptions.AstroidError\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/usr/lib/python3.14/site-packages/pylint/lint/pylinter.py\", line 784, in _lint_files\n    self._lint_file(fileitem, module, check_astroid_module)\n    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/site-packages/pylint/lint/pylinter.py\", line 823, in _lint_file\n    raise astroid.AstroidError from e\nastroid.exceptions.AstroidError\n\n```\n\n</details>\n\n### Expected behavior\n\nNo crash.\n\n### Pylint version\n\n```shell\npylint 4.0.5\nastroid 4.1.1\nPython 3.14.3 (main, Feb 13 2026, 15:31:44) [GCC 15.2.1 20260209]\n```\n\n### OS / Environment\n\nlinux (Linux)"
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-08T03:09:32.021Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 3,
+  "extra": {
+   "repogym": {
+    "reward": 0,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 0,
+     "fail_to_pass_passed": 0,
+     "fail_to_pass_total": 1,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 47,
+     "fail_to_pass_failed": [
+      "tests.test_object_model::test_getattr_on_property_fset_with_annassign_does_not_crash"
+     ],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 0,
+     "error": "",
+     "peak_memory_bytes": 74743808,
+     "seconds": 5.0
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "pylint-dev__astroid-2997",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "a06067659cb6f867",
+   "image_digest": "sha256:c75d6b78f8d2dc408807bb0db675deac4002c075a2a5bb4c451868ec389e5aa1",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

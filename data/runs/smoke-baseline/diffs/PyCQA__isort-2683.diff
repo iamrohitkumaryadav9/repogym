@@ -1,0 +1,19 @@
+diff --git a/isort/core.py b/isort/core.py
+index 8d62670f..08f15877 100644
+--- a/isort/core.py
++++ b/isort/core.py
+@@ -101,10 +101,10 @@ def _float_to_top(
+                 parsed = parse.file_contents(current, config=config)
+                 verbose_output += parsed.verbose_output
+                 extra_space = ""
+-                while before and before[-1] == "\n":
+-                    extra_space += "\n"
+-                    before = before[:-1]
+-                extra_space = extra_space.replace("\n", "", 1)
++                line_separator = parsed.line_separator
++                while before.endswith(line_separator + line_separator):
++                    extra_space += line_separator
++                    before = before[:-len(line_separator)]
+                 sorted_output = output.sorted_imports(
+                     parsed, config, extension, import_type="import"
+                 )

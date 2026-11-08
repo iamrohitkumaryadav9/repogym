@@ -1,0 +1,316 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-dev-oracle",
+ "trajectory_id": "c573925b7f7bb505",
+ "agent": {
+  "name": "repogym-oracle",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-07T18:43:47.342Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-07T18:43:47.342Z",
+   "source": "user",
+   "message": "# Show blank isort output at top of help command\n\nWhile reading the documentation, I found that isort shows some common examples if called without any arguments. However, as a new user, I called isort via `isort --help`. It would be beneficial if these examples were included in the help text, preferably in the first few lines."
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-07T18:43:47.342Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "overwrote isort/main.py (1249 lines)"
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.27,
+     "raw_chars": 36
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "create_file",
+     "arguments": {
+      "path": "isort/main.py",
+      "content": "\"\"\"Tool for sorting imports alphabetically, and automatically separated into sections.\"\"\"\n\nfrom __future__ import annotations\n\nimport argparse\nimport functools\nimport json\nimport os\nimport sys\nfrom collections.abc import Iterator, Sequence\nfrom contextlib import AbstractContextManager, nullcontext\nfrom dataclasses import asdict\nfrom gettext import gettext as _\nfrom io import TextIOWrapper\nfrom pathlib import Path\nfrom typing import Any, Literal, TextIO, TypeVar\nfrom warnings import warn\n\nfrom . import api, files, sections\nfrom ._version import _VERSION_STRING\nfrom .exceptions import FileSkipped, ISortError, UnsupportedEncoding\nfrom .format import create_terminal_printer\nfrom .profiles import profiles\nfrom .settings import VALID_PY_TARGETS, Config, find_all_configs\nfrom .utils import Trie\nfrom .wrap_modes import WrapModes\n\n_T = TypeVar(\"_T\")\n\nQUICK_GUIDE = rf\"\"\"\n                 _                 _\n                (_) ___  ___  _ __| |_\n                | |/ _/ / _ \\/ '__  _/\n                | |\\__ \\/\\_\\/| |  | |_\n                |_|\\___/\\___/\\_/   \\_/\n\n      isort your imports, so you don't have to.\n\n                    VERSION {_VERSION_STRING}\n\nTry one of the following:\n\n    `isort .` - sort all Python files, starting from the current directory, recursively.\n    `isort . --interactive` - Do the same, but ask before making any changes.\n    `isort . --check --diff` - Check to see if imports are correctly sorted within this project.\n    `isort --help` - In-depth information about isort's available command-line options.\n\nVisit https://isort.readthedocs.io/ for complete information about how to use isort.\n\"\"\"\n\n\nclass SortAttempt:\n    def __init__(self, incorrectly_sorted: bool, skipped: bool, supported_encoding: bool) -> None:\n        self.incorrectly_sorted = incorrectly_sorted\n        self.skipped = skipped\n        self.supported_encoding = supported_encoding\n\n    def __reduce__(self) -> tuple[type[SortAttempt], tuple[bool, bool, bool]]:\n        # Defined explicitly as mypyc's removal of `__dict__` breaks pickling this class, which is\n        # necessary when using multiple jobs.\n        return (self.__class__, (self.incorrectly_sorted, self.skipped, self.supported_encoding))\n\n\ndef _stream_with_preserved_newlines(\n    stream: TextIO, *, mode: Literal[\"r\", \"w\"]\n) -> AbstractContextManager[TextIO]:\n    if stream is not sys.stdin and stream is not sys.stdout:\n        return nullcontext(stream)\n    try:\n        stream_fileno = stream.fileno()\n    except OSError:\n        return nullcontext(stream)\n\n    return open(\n        stream_fileno,\n        mode,\n        encoding=stream.encoding,\n        errors=stream.errors,\n        newline=\"\",\n        closefd=False,\n    )\n\n\ndef sort_imports(\n    file_name: str | Path,\n    config: Config,\n    check: bool = False,\n    ask_to_apply: bool = False,\n    write_to_stdout: bool = False,\n    **kwargs: Any,\n) -> SortAttempt | None:\n    incorrectly_sorted: bool = False\n    skipped: bool = False\n    try:\n        if check:\n            try:\n                incorrectly_sorted = not api.check_file(file_name, config=config, **kwargs)\n            except FileSkipped:\n                skipped = True\n            return SortAttempt(incorrectly_sorted, skipped, True)\n\n        try:\n            incorrectly_sorted = not api.sort_file(\n                file_name,\n                config=config,\n                ask_to_apply=ask_to_apply,\n                write_to_stdout=write_to_stdout,\n                **kwargs,\n            )\n        except FileSkipped:\n            skipped = True\n        return SortAttempt(incorrectly_sorted, skipped, True)\n    except (OSError, ValueError) as error:\n        warn(f\"Unable to parse file {file_name} due to {error}\", stacklevel=2)\n        return None\n    except UnsupportedEncoding:\n        if config.verbose:\n            warn(f\"Encoding not supported for {file_name}\", stacklevel=2)\n        return SortAttempt(incorrectly_sorted, skipped, False)\n    except ISortError as error:\n        _print_hard_fail(config, message=str(error))\n        sys.exit(1)\n    except Exception:\n        _print_hard_fail(config, offending_file=file_name)\n        raise\n\n\ndef _print_hard_fail(\n    config: Config, offending_file: str | Path | None = None, message: str | None = None\n) -> None:\n    \"\"\"Fail on unrecoverable exception with custom message.\"\"\"\n    message = message or (\n        f\"Unrecoverable exception thrown when parsing {offending_file or ''}! \"\n        \"This should NEVER happen.\\n\"\n        \"If encountered, please open an issue: https://github.com/PyCQA/isort/issues/new\"\n    )\n    printer = create_terminal_printer(\n        color=config.color_output, error=config.format_error, success=config.format_success\n    )\n    printer.error(message)\n\n\ndef _build_arg_parser() -> argparse.ArgumentParser:\n    parser = argparse.ArgumentParser(\n        usage=QUICK_GUIDE,\n        add_help=False,  # prevent help option from appearing in \"optional arguments\" group\n    )\n\n    general_group = parser.add_argument_group(\"general options\")\n    target_group = parser.add_argument_group(\"target options\")\n    output_group = parser.add_argument_group(\"general output options\")\n    inline_args_group = output_group.add_mutually_exclusive_group()\n    section_group = parser.add_argument_group(\"section output options\")\n\n    general_group.add_argument(\n        \"-h\",\n        \"--help\",\n        action=\"help\",\n        default=argparse.SUPPRESS,\n        help=_(\"show this help message and exit\"),\n    )\n    general_group.add_argument(\n        \"--version\",\n        action=\"version\",\n        version=_VERSION_STRING,\n        help=\"Returns just the current version number without the logo\",\n    )\n    general_group.add_argument(\n        \"-v\",\n        \"--verbose\",\n        action=\"store_true\",\n        dest=\"verbose\",\n        help=\"Shows verbose output, such as when files are skipped or when a check is successful.\",\n    )\n    general_group.add_argument(\n        \"--only-modified\",\n        \"--om\",\n        dest=\"only_modified\",\n        action=\"store_true\",\n        help=\"Suppresses verbose output for non-modified files.\",\n    )\n    general_group.add_argument(\n        \"--dedup-headings\",\n        dest=\"dedup_headings\",\n        action=\"store_true\",\n        help=\"Tells isort to only show an identical custom import heading comment once, even if\"\n        \" there are multiple sections with the comment set.\",\n    )\n    general_group.add_argument(\n        \"-q\",\n        \"--quiet\",\n        action=\"store_true\",\n        dest=\"quiet\",\n        help=\"Shows extra quiet output, only errors are outputted.\",\n    )\n    general_group.add_argument(\n        \"-d\",\n        \"--stdout\",\n        help=\"Force resulting output to stdout, instead of in-place.\",\n        dest=\"write_to_stdout\",\n        action=\"store_true\",\n    )\n    general_group.add_argument(\n        \"--overwrite-in-place\",\n        help=\"Tells isort to overwrite in place using the same file handle. \"\n        \"Comes at a performance and memory usage penalty over its standard \"\n        \"approach but ensures all file flags and modes stay unchanged.\",\n        dest=\"overwrite_in_place\",\n        action=\"store_true\",\n    )\n    general_group.add_argument(\n        \"--show-config\",\n        dest=\"show_config\",\n        action=\"store_true\",\n        help=\"See isort's determined config, as well as sources of config options.\",\n    )\n    general_group.add_argument(\n        \"--show-files\",\n        dest=\"show_files\",\n        action=\"store_true\",\n        help=\"See the files isort will be run against with the current config options.\",\n    )\n    general_group.add_argument(\n        \"--df\",\n        \"--diff\",\n        dest=\"show_diff\",\n        action=\"store_true\",\n        help=\"Prints a diff of all the changes isort would make to a file, instead of \"\n        \"changing it in place\",\n    )\n    general_group.add_argument(\n        \"-c\",\n        \"--check-only\",\n        \"--check\",\n        action=\"store_true\",\n        dest=\"check\",\n        help=\"Checks the file for unsorted / unformatted imports and prints them to the \"\n        \"command line without modifying the file. Returns 0 when nothing would change and \"\n        \"returns 1 when the file would be reformatted.\",\n    )\n    general_group.add_argument(\n        \"--ws\",\n        \"--ignore-whitespace\",\n        action=\"store_true\",\n        dest=\"ignore_whitespace\",\n        help=\"Tells isort to ignore whitespace differences when --check-only is being used.\",\n    )\n    general_group.add_argument(\n        \"--sp\",\n        \"--settings-path\",\n        \"--settings-file\",\n        \"--settings\",\n        dest=\"settings_path\",\n        help=\"Explicitly set the settings path or file instead of auto determining \"\n        \"based on file location.\",\n    )\n    general_group.add_argument(\n        \"--cr\",\n        \"--config-root\",\n        dest=\"config_root\",\n        help=\"Explicitly set the config root for resolving all configs. When used \"\n        \"with the --resolve-all-configs flag, isort will look at all sub-folders \"\n        \"in this config root to resolve config files and sort files based on the \"\n        \"closest available config(if any)\",\n    )\n    general_group.add_argument(\n        \"--resolve-all-configs\",\n        dest=\"resolve_all_configs\",\n        action=\"store_true\",\n        help=\"Tells isort to resolve the configs for all sub-directories \"\n        \"and sort files in terms of its closest config files.\",\n    )\n    general_group.add_argument(\n        \"--profile\",\n        dest=\"profile\",\n        type=str,\n        help=\"Base profile type to use for configuration. \"\n        f\"Profiles include: {', '.join(profiles.keys())}. As well as any shared profiles.\",\n    )\n    general_group.add_argument(\n        \"-j\",\n        \"--jobs\",\n        help=\"Number of files to process in parallel. Negative value means use number of CPUs.\",\n        dest=\"jobs\",\n        type=int,\n        nargs=\"?\",\n        const=-1,\n    )\n    general_group.add_argument(\n        \"--ac\",\n        \"--atomic\",\n        dest=\"atomic\",\n        action=\"store_true\",\n        help=\"Ensures the output doesn't save if the resulting file contains syntax errors.\",\n    )\n    general_group.add_argument(\n        \"--interactive\",\n        dest=\"ask_to_apply\",\n        action=\"store_true\",\n        help=\"Tells isort to apply changes interactively.\",\n    )\n    general_group.add_argument(\n        \"--format-error\",\n        dest=\"format_error\",\n        help=\"Override the format used to print errors.\",\n    )\n    general_group.add_argument(\n        \"--format-success\",\n        dest=\"format_success\",\n        help=\"Override the format used to print success.\",\n    )\n    general_group.add_argument(\n        \"--srx\",\n        \"--sort-reexports\",\n        dest=\"sort_reexports\",\n        action=\"store_true\",\n        help=\"Automatically sort all re-exports (module level __all__ collections)\",\n    )\n\n    target_group.add_argument(\n        \"files\", nargs=\"*\", help=\"One or more Python source files that need their imports sorted.\"\n    )\n    target_group.add_argument(\n        \"--filter-files\",\n        dest=\"filter_files\",\n        action=\"store_true\",\n        help=\"Tells isort to filter files even when they are explicitly passed in as \"\n        \"part of the CLI command.\",\n    )\n    target_group.add_argument(\n        \"-s\",\n        \"--skip\",\n        help=\"Files that isort should skip over. If you want to skip multiple \"\n        \"files you should specify twice: --skip file1 --skip file2. Values can be \"\n        \"file names, directory names or file paths. To skip all files in a nested path \"\n        \"use --skip-glob.\",\n        dest=\"skip\",\n        action=\"append\",\n    )\n    target_group.add_argument(\n        \"--extend-skip\",\n        help=\"Extends --skip to add additional files that isort should skip over. \"\n        \"If you want to skip multiple \"\n        \"files you should specify twice: --skip file1 --skip file2. Values can be \"\n        \"file names, directory names or file paths. To skip all files in a nested path \"\n        \"use --skip-glob.\",\n        dest=\"extend_skip\",\n        action=\"append\",\n    )\n    target_group.add_argument(\n        \"--sg\",\n        \"--skip-glob\",\n        help=\"Files that isort should skip over.\",\n        dest=\"skip_glob\",\n        action=\"append\",\n    )\n    target_group.add_argument(\n        \"--extend-skip-glob\",\n        help=\"Additional files that isort should skip over (extending --skip-glob).\",\n        dest=\"extend_skip_glob\",\n        action=\"append\",\n    )\n    target_group.add_argument(\n        \"--gitignore\",\n        \"--skip-gitignore\",\n        action=\"store_true\",\n        dest=\"skip_gitignore\",\n        help=\"Treat project as a git repository and ignore files listed in .gitignore.\"\n        \"\\nNOTE: This requires git to be installed and accessible from the same shell as isort.\",\n    )\n    target_group.add_argument(\n        \"--ext\",\n        \"--extension\",\n        \"--supported-extension\",\n        dest=\"supported_extensions\",\n        action=\"append\",\n        help=\"Specifies what extensions isort can be run against.\",\n    )\n    target_group.add_argument(\n        \"--blocked-extension\",\n        dest=\"blocked_extensions\",\n        action=\"append\",\n        help=\"Specifies what extensions isort can never be run against.\",\n    )\n    target_group.add_argument(\n        \"--dont-follow-links\",\n        dest=\"dont_follow_links\",\n        action=\"store_true\",\n        help=\"Tells isort not to follow symlinks that are encountered when running recursively.\",\n    )\n    target_group.add_argument(\n        \"--filename\",\n        dest=\"filename\",\n        help=\"Provide the filename associated with a stream.\",\n    )\n    target_group.add_argument(\n        \"--allow-root\",\n        action=\"store_true\",\n        default=False,\n        help=\"Tells isort not to treat / specially, allowing it to be run against the root dir.\",\n    )\n\n    output_group.add_argument(\n        \"-a\",\n        \"--add-import\",\n        dest=\"add_imports\",\n        action=\"append\",\n        help=\"Adds the specified import line to all files, \"\n        \"automatically determining correct placement.\",\n    )\n    output_group.add_argument(\n        \"--append\",\n        \"--append-only\",\n        dest=\"append_only\",\n        action=\"store_true\",\n        help=\"Only adds the imports specified in --add-import if the file\"\n        \" contains existing imports.\",\n    )\n    output_group.add_argument(\n        \"--af\",\n        \"--force-adds\",\n        dest=\"force_adds\",\n        action=\"store_true\",\n        help=\"Forces import adds even if the original file is empty.\",\n    )\n    output_group.add_argument(\n        \"--rm\",\n        \"--remove-import\",\n        dest=\"remove_imports\",\n        action=\"append\",\n        help=\"Removes the specified import from all files.\",\n    )\n    output_group.add_argument(\n        \"--float-to-top\",\n        dest=\"float_to_top\",\n        action=\"store_true\",\n        help=\"Causes all non-indented imports to float to the top of the file having its imports \"\n        \"sorted (immediately below the top of file comment).\\n\"\n        \"This can be an excellent shortcut for collecting imports every once in a while \"\n        \"when you place them in the middle of a file to avoid context switching.\\n\\n\"\n        \"*NOTE*: It currently doesn't work with cimports and introduces some extra over-head \"\n        \"and a performance penalty.\",\n    )\n    output_group.add_argument(\n        \"--dont-float-to-top\",\n        dest=\"dont_float_to_top\",\n        action=\"store_true\",\n        help=\"Forces --float-to-top setting off. See --float-to-top for more information.\",\n    )\n    output_group.add_argument(\n        \"--ca\",\n        \"--combine-as\",\n        dest=\"combine_as_imports\",\n        action=\"store_true\",\n        help=\"Combines as imports on the same line.\",\n    )\n    output_group.add_argument(\n        \"--cs\",\n        \"--combine-star\",\n        dest=\"combine_star\",\n        action=\"store_true\",\n        help=\"Ensures that if a star import is present, \"\n        \"nothing else is imported from that namespace.\",\n    )\n    output_group.add_argument(\n        \"-e\",\n        \"--balanced\",\n        dest=\"balanced_wrapping\",\n        action=\"store_true\",\n        help=\"Balances wrapping to produce the most consistent line length possible\",\n    )\n    output_group.add_argument(\n        \"--ff\",\n        \"--from-first\",\n        dest=\"from_first\",\n        action=\"store_true\",\n        help=\"Switches the typical ordering preference, \"\n        \"showing from imports first then straight ones.\",\n    )\n    output_group.add_argument(\n        \"--fgw\",\n        \"--force-grid-wrap\",\n        nargs=\"?\",\n        const=2,\n        type=int,\n        dest=\"force_grid_wrap\",\n        help=\"Force number of from imports (defaults to 2 when passed as CLI flag without value) \"\n        \"to be grid wrapped regardless of line \"\n        \"length. If 0 is passed in (the global default) only line length is considered.\",\n    )\n    output_group.add_argument(\n        \"--fs\",\n        \"--forced-separate\",\n        dest=\"forced_separate\",\n        action=\"append\",\n        help=\"Force specified sub modules to show separately. To specify multiple modules, \"\n        \"use the argument multiple times: --forced-separate typing --forced-separate six.\",\n    )\n    output_group.add_argument(\n        \"-i\",\n        \"--indent\",\n        help='String to place for indents defaults to \"    \" (4 spaces).',\n        dest=\"indent\",\n        type=str,\n    )\n    output_group.add_argument(\n        \"--lbi\", \"--lines-before-imports\", dest=\"lines_before_imports\", type=int\n    )\n    output_group.add_argument(\n        \"--lai\", \"--lines-after-imports\", dest=\"lines_after_imports\", type=int\n    )\n    output_group.add_argument(\n        \"--lbt\", \"--lines-between-types\", dest=\"lines_between_types\", type=int\n    )\n    output_group.add_argument(\n        \"--le\",\n        \"--line-ending\",\n        dest=\"line_ending\",\n        help=\"Forces line endings to the specified value. \"\n        \"If not set, values will be guessed per-file.\",\n    )\n    output_group.add_argument(\n        \"--ls\",\n        \"--length-sort\",\n        help=\"Sort imports by their string length.\",\n        dest=\"length_sort\",\n        action=\"store_true\",\n    )\n    output_group.add_argument(\n        \"--lss\",\n        \"--length-sort-straight\",\n        help=\"Sort straight imports by their string length. Similar to `length_sort` \"\n        \"but applies only to straight imports and doesn't affect from imports.\",\n        dest=\"length_sort_straight\",\n        action=\"store_true\",\n    )\n    output_group.add_argument(\n        \"-m\",\n        \"--multi-line\",\n        dest=\"multi_line_output\",\n        choices=list(WrapModes.__members__.keys())\n        + [str(mode.value) for mode in WrapModes.__members__.values()],\n        type=str,\n        help=\"Multi line output (0-grid, 1-vertical, 2-hanging, 3-vert-hanging, 4-vert-grid, \"\n        \"5-vert-grid-grouped, 6-deprecated-alias-for-5, 7-noqa, \"\n        \"8-vertical-hanging-indent-bracket, 9-vertical-prefix-from-module-import, \"\n        \"10-hanging-indent-with-parentheses).\",\n    )\n    output_group.add_argument(\n        \"-n\",\n        \"--ensure-newline-before-comments\",\n        dest=\"ensure_newline_before_comments\",\n        action=\"store_true\",\n        help=\"Inserts a blank line before a comment following an import.\",\n    )\n    inline_args_group.add_argument(\n        \"--nis\",\n        \"--no-inline-sort\",\n        dest=\"no_inline_sort\",\n        action=\"store_true\",\n        help=\"Leaves `from` imports with multiple imports 'as-is' \"\n        \"(e.g. `from foo import a, c ,b`).\",\n    )\n    output_group.add_argument(\n        \"--ot\",\n        \"--order-by-type\",\n        dest=\"order_by_type\",\n        action=\"store_true\",\n        help=\"Order imports by type, which is determined by case, in addition to alphabetically.\\n\"\n        \"\\n**NOTE**: type here refers to the implied type from the import name capitalization.\\n\"\n        ' isort does not do type introspection for the imports. These \"types\" are simply: '\n        \"CONSTANT_VARIABLE, CamelCaseClass, variable_or_function. If your project follows PEP8\"\n        \" or a related coding standard and has many imports this is a good default, otherwise you \"\n        \"likely will want to turn it off. From the CLI the `--dont-order-by-type` option will turn \"\n        \"this off.\",\n    )\n    output_group.add_argument(\n        \"--dt\",\n        \"--dont-order-by-type\",\n        dest=\"dont_order_by_type\",\n        action=\"store_true\",\n        help=\"Don't order imports by type, which is determined by case, in addition to \"\n        \"alphabetically.\\n\\n\"\n        \"**NOTE**: type here refers to the implied type from the import name capitalization.\\n\"\n        ' isort does not do type introspection for the imports. These \"types\" are simply: '\n        \"CONSTANT_VARIABLE, CamelCaseClass, variable_or_function. If your project follows PEP8\"\n        \" or a related coding standard and has many imports this is a good default. You can turn \"\n        \"this on from the CLI using `--order-by-type`.\",\n    )\n    output_group.add_argument(\n        \"--rr\",\n        \"--reverse-relative\",\n        dest=\"reverse_relative\",\n        action=\"store_true\",\n        help=\"Reverse order of relative imports.\",\n    )\n    output_group.add_argument(\n        \"--reverse-sort\",\n        dest=\"reverse_sort\",\n        action=\"store_true\",\n        help=\"Reverses the ordering of imports.\",\n    )\n    output_group.add_argument(\n        \"--sort-order\",\n        dest=\"sort_order\",\n        help=\"Specify sorting function. Can be built in (natural[default] = force numbers \"\n        \"to be sequential, native = Python's built-in sorted function) or an installable plugin.\",\n    )\n    inline_args_group.add_argument(\n        \"--sl\",\n        \"--force-single-line-imports\",\n        dest=\"force_single_line\",\n        action=\"store_true\",\n        help=\"Forces all from imports to appear on their own line\",\n    )\n    output_group.add_argument(\n        \"--nsl\",\n        \"--single-line-exclusions\",\n        help=\"One or more modules to exclude from the single line rule.\",\n        dest=\"single_line_exclusions\",\n        action=\"append\",\n    )\n    output_group.add_argument(\n        \"--tc\",\n        \"--trailing-comma\",\n        dest=\"include_trailing_comma\",\n        action=\"store_true\",\n        help=\"Includes a trailing comma on multi line imports that include parentheses.\",\n    )\n    output_group.add_argument(\n        \"--up\",\n        \"--use-parentheses\",\n        dest=\"use_parentheses\",\n        action=\"store_true\",\n        help=\"Use parentheses for line continuation on length limit instead of slashes.\"\n        \" **NOTE**: This is separate from wrap modes, and only affects how individual lines that \"\n        \" are too long get continued, not sections of multiple imports.\",\n    )\n    output_group.add_argument(\n        \"-l\",\n        \"-w\",\n        \"--line-length\",\n        \"--line-width\",\n        help=\"The max length of an import line (used for wrapping long imports).\",\n        dest=\"line_length\",\n        type=int,\n    )\n    output_group.add_argument(\n        \"--wl\",\n        \"--wrap-length\",\n        dest=\"wrap_length\",\n        type=int,\n        help=\"Specifies how long lines that are wrapped should be, if not set line_length is used.\"\n        \"\\nNOTE: wrap_length must be LOWER than or equal to line_length.\",\n    )\n    output_group.add_argument(\n        \"--case-sensitive\",\n        dest=\"case_sensitive\",\n        action=\"store_true\",\n        help=\"Tells isort to include casing when sorting module names\",\n    )\n    output_group.add_argument(\n        \"--remove-redundant-aliases\",\n        dest=\"remove_redundant_aliases\",\n        action=\"store_true\",\n        help=(\n            \"Tells isort to remove redundant aliases from imports, such as `import os as os`.\"\n            \" This defaults to `False` simply because some projects use these seemingly useless \"\n            \" aliases to signify intent and change behaviour.\"\n        ),\n    )\n    output_group.add_argument(\n        \"--honor-noqa\",\n        dest=\"honor_noqa\",\n        action=\"store_true\",\n        help=\"Tells isort to honor noqa comments to enforce skipping those comments.\",\n    )\n    output_group.add_argument(\n        \"--treat-comment-as-code\",\n        dest=\"treat_comments_as_code\",\n        action=\"append\",\n        help=\"Tells isort to treat the specified single line comment(s) as if they are code.\",\n    )\n    output_group.add_argument(\n        \"--treat-all-comment-as-code\",\n        dest=\"treat_all_comments_as_code\",\n        action=\"store_true\",\n        help=\"Tells isort to treat all single line comments as if they are code.\",\n    )\n    output_group.add_argument(\n        \"--formatter\",\n        dest=\"formatter\",\n        type=str,\n        help=\"Specifies the name of a formatting plugin to use when producing output.\",\n    )\n    output_group.add_argument(\n        \"--color\",\n        dest=\"color_output\",\n        action=\"store_true\",\n        help=\"Tells isort to use color in terminal output.\",\n    )\n    output_group.add_argument(\n        \"--ext-format\",\n        dest=\"ext_format\",\n        help=\"Tells isort to format the given files according to an extensions formatting rules.\",\n    )\n    output_group.add_argument(\n        \"--star-first\",\n        help=\"Forces star imports above others to avoid overriding directly imported variables.\",\n        dest=\"star_first\",\n        action=\"store_true\",\n    )\n    output_group.add_argument(\n        \"--split-on-trailing-comma\",\n        help=\"Split imports list followed by a trailing comma into VERTICAL_HANGING_INDENT mode\",\n        dest=\"split_on_trailing_comma\",\n        action=\"store_true\",\n    )\n\n    section_group.add_argument(\n        \"--sd\",\n        \"--section-default\",\n        dest=\"default_section\",\n        help=\"Sets the default section for import options: \" + str(sections.DEFAULT),\n    )\n    section_group.add_argument(\n        \"--only-sections\",\n        \"--os\",\n        dest=\"only_sections\",\n        action=\"store_true\",\n        help=\"Causes imports to be sorted based on their sections like STDLIB, THIRDPARTY, etc. \"\n        \"Within sections, the imports are ordered by their import style and the imports with \"\n        \"the same style maintain their relative positions.\",\n    )\n    section_group.add_argument(\n        \"--ds\",\n        \"--no-sections\",\n        help=\"Put all imports into the same section bucket\",\n        dest=\"no_sections\",\n        action=\"store_true\",\n    )\n    section_group.add_argument(\n        \"--fas\",\n        \"--force-alphabetical-sort\",\n        action=\"store_true\",\n        dest=\"force_alphabetical_sort\",\n        help=\"Force all imports to be sorted as a single section\",\n    )\n    section_group.add_argument(\n        \"--fss\",\n        \"--force-sort-within-sections\",\n        action=\"store_true\",\n        dest=\"force_sort_within_sections\",\n        help=\"Don't sort straight-style imports (like import sys) before from-style imports \"\n        \"(like from itertools import groupby). Instead, sort the imports by module, \"\n        \"independent of import style.\",\n    )\n    section_group.add_argument(\n        \"--hcss\",\n        \"--honor-case-in-force-sorted-sections\",\n        action=\"store_true\",\n        dest=\"honor_case_in_force_sorted_sections\",\n        help=\"Honor `--case-sensitive` when `--force-sort-within-sections` is being used. \"\n        \"Without this option set, `--order-by-type` decides module name ordering too.\",\n    )\n    section_group.add_argument(\n        \"--srss\",\n        \"--sort-relative-in-force-sorted-sections\",\n        action=\"store_true\",\n        dest=\"sort_relative_in_force_sorted_sections\",\n        help=\"When using `--force-sort-within-sections`, sort relative imports the same \"\n        \"way as they are sorted when not using that setting.\",\n    )\n    section_group.add_argument(\n        \"--fass\",\n        \"--force-alphabetical-sort-within-sections\",\n        action=\"store_true\",\n        dest=\"force_alphabetical_sort_within_sections\",\n        help=\"Force all imports to be sorted alphabetically within a section\",\n    )\n    section_group.add_argument(\n        \"-t\",\n        \"--top\",\n        help=\"Force specific imports to the top of their appropriate section.\",\n        dest=\"force_to_top\",\n        action=\"append\",\n    )\n    section_group.add_argument(\n        \"--combine-straight-imports\",\n        \"--csi\",\n        dest=\"combine_straight_imports\",\n        action=\"store_true\",\n        help=\"Combines all the bare straight imports of the same section in a single line. \"\n        \"Won't work with sections which have 'as' imports\",\n    )\n    section_group.add_argument(\n        \"--nlb\",\n        \"--no-lines-before\",\n        help=\"Sections which should not be split with previous by empty lines\",\n        dest=\"no_lines_before\",\n        action=\"append\",\n    )\n    section_group.add_argument(\n        \"--src\",\n        \"--src-path\",\n        dest=\"src_paths\",\n        action=\"append\",\n        help=\"Add an explicitly defined source path \"\n        \"(modules within src paths have their imports automatically categorized as first_party).\"\n        \" Glob expansion (`*` and `**`) is supported for this option.\",\n    )\n    section_group.add_argument(\n        \"-b\",\n        \"--builtin\",\n        dest=\"known_standard_library\",\n        action=\"append\",\n        help=\"Force isort to recognize a module as part of Python's standard library.\",\n    )\n    section_group.add_argument(\n        \"--extra-builtin\",\n        dest=\"extra_standard_library\",\n        action=\"append\",\n        help=\"Extra modules to be included in the list of ones in Python's standard library.\",\n    )\n    section_group.add_argument(\n        \"-f\",\n        \"--future\",\n        dest=\"known_future_library\",\n        action=\"append\",\n        help=\"Force isort to recognize a module as part of Python's internal future compatibility \"\n        \"libraries. WARNING: this overrides the behavior of __future__ handling and therefore\"\n        \" can result in code that can't execute. If you're looking to add dependencies such \"\n        \"as six, a better option is to create another section below --future using custom \"\n        \"sections. See: https://github.com/PyCQA/isort#custom-sections-and-ordering and the \"\n        \"discussion here: https://github.com/PyCQA/isort/issues/1463.\",\n    )\n    section_group.add_argument(\n        \"-o\",\n        \"--thirdparty\",\n        dest=\"known_third_party\",\n        action=\"append\",\n        help=\"Force isort to recognize a module as being part of a third party library.\",\n    )\n    section_group.add_argument(\n        \"-p\",\n        \"--project\",\n        dest=\"known_first_party\",\n        action=\"append\",\n        help=\"Force isort to recognize a module as being part of the current python project.\",\n    )\n    section_group.add_argument(\n        \"--known-local-folder\",\n        dest=\"known_local_folder\",\n        action=\"append\",\n        help=\"Force isort to recognize a module as being a local folder. \"\n        \"Generally, this is reserved for relative imports (from . import module).\",\n    )\n    section_group.add_argument(\n        \"--virtual-env\",\n        dest=\"virtual_env\",\n        help=\"Virtual environment to use for determining whether a package is third-party\",\n    )\n    section_group.add_argument(\n        \"--conda-env\",\n        dest=\"conda_env\",\n        help=\"Conda environment to use for determining whether a package is third-party\",\n    )\n    section_group.add_argument(\n        \"--py\",\n        \"--python-version\",\n        action=\"store\",\n        dest=\"py_version\",\n        choices=(*tuple(VALID_PY_TARGETS), \"auto\"),\n        help=\"Tells isort to set the known standard library based on the specified Python \"\n        \"version. Default is to assume any Python 3 version could be the target, and use a union \"\n        \"of all stdlib modules across versions. If auto is specified, the version of the \"\n        \"interpreter used to run isort \"\n        f\"(currently: {sys.version_info.major}{sys.version_info.minor}) will be used.\",\n    )\n\n    return parser\n\n\ndef parse_args(argv: Sequence[str] | None = None) -> dict[str, Any]:\n    argv = sys.argv[1:] if argv is None else list(argv)\n\n    parser = _build_arg_parser()\n    arguments = {key: value for key, value in vars(parser.parse_args(argv)).items() if value}\n    if \"dont_order_by_type\" in arguments:\n        arguments[\"order_by_type\"] = False\n        del arguments[\"dont_order_by_type\"]\n    if \"dont_follow_links\" in arguments:\n        arguments[\"follow_links\"] = False\n        del arguments[\"dont_follow_links\"]\n    if \"dont_float_to_top\" in arguments:\n        del arguments[\"dont_float_to_top\"]\n        if arguments.get(\"float_to_top\", False):\n            sys.exit(\"Can't set both --float-to-top and --dont-float-to-top.\")\n        else:\n            arguments[\"float_to_top\"] = False\n    multi_line_output = arguments.get(\"multi_line_output\", None)\n    if multi_line_output:\n        if multi_line_output.isdigit():\n            arguments[\"multi_line_output\"] = WrapModes(int(multi_line_output))\n        else:\n            arguments[\"multi_line_output\"] = WrapModes[multi_line_output]\n\n    return arguments\n\n\ndef _preconvert(item: set[_T] | object) -> str | list[_T]:\n    \"\"\"Preconverts objects from native types into JSONifiable types\"\"\"\n    if isinstance(item, (set, frozenset)):\n        return list(item)\n    if isinstance(item, WrapModes):\n        return item.name\n    if isinstance(item, Path):\n        return str(item)\n    if callable(item) and hasattr(item, \"__name__\"):\n        return str(item.__name__)\n    raise TypeError(f\"Unserializable object {item} of type {type(item)}\")\n\n\ndef identify_imports_main(\n    argv: Sequence[str] | None = None, stdin: TextIOWrapper | None = None\n) -> None:\n    parser = argparse.ArgumentParser(\n        description=\"Get all import definitions from a given file.\"\n        \"Use `-` as the first argument to represent stdin.\"\n    )\n    parser.add_argument(\n        \"files\", nargs=\"+\", help=\"One or more Python source files that need their imports sorted.\"\n    )\n    parser.add_argument(\n        \"--top-only\",\n        action=\"store_true\",\n        default=False,\n        help=\"Only identify imports that occur in before functions or classes.\",\n    )\n\n    target_group = parser.add_argument_group(\"target options\")\n    target_group.add_argument(\n        \"--follow-links\",\n        action=\"store_true\",\n        default=False,\n        help=\"Tells isort to follow symlinks that are encountered when running recursively.\",\n    )\n\n    uniqueness = parser.add_mutually_exclusive_group()\n    uniqueness.add_argument(\n        \"--unique\",\n        action=\"store_true\",\n        default=False,\n        help=\"If true, isort will only identify unique imports.\",\n    )\n    uniqueness.add_argument(\n        \"--packages\",\n        dest=\"unique\",\n        action=\"store_const\",\n        const=api.ImportKey.PACKAGE,\n        default=False,\n        help=\"If true, isort will only identify the unique top level modules imported.\",\n    )\n    uniqueness.add_argument(\n        \"--modules\",\n        dest=\"unique\",\n        action=\"store_const\",\n        const=api.ImportKey.MODULE,\n        default=False,\n        help=\"If true, isort will only identify the unique modules imported.\",\n    )\n    uniqueness.add_argument(\n        \"--attributes\",\n        dest=\"unique\",\n        action=\"store_const\",\n        const=api.ImportKey.ATTRIBUTE,\n        default=False,\n        help=\"If true, isort will only identify the unique attributes imported.\",\n    )\n\n    arguments = parser.parse_args(argv)\n\n    file_names = arguments.files\n    if file_names == [\"-\"]:\n        identified_imports = api.find_imports_in_stream(\n            sys.stdin if stdin is None else stdin,\n            unique=arguments.unique,\n            top_only=arguments.top_only,\n            follow_links=arguments.follow_links,\n        )\n    else:\n        identified_imports = api.find_imports_in_paths(\n            file_names,\n            unique=arguments.unique,\n            top_only=arguments.top_only,\n            follow_links=arguments.follow_links,\n        )\n\n    for identified_import in identified_imports:\n        if arguments.unique == api.ImportKey.PACKAGE:\n            print(identified_import.module.split(\".\")[0])\n        elif arguments.unique == api.ImportKey.MODULE:\n            print(identified_import.module)\n        elif arguments.unique == api.ImportKey.ATTRIBUTE:\n            print(f\"{identified_import.module}.{identified_import.attribute}\")\n        else:\n            print(str(identified_import))\n\n\n# Ignore DeepSource cyclomatic complexity check for this function. It is one\n# the main entrypoints so sort of expected to be complex.\n# skipcq: PY-R1000\ndef main(argv: Sequence[str] | None = None, stdin: TextIOWrapper | None = None) -> None:\n    arguments = parse_args(argv)\n\n    show_config: bool = arguments.pop(\"show_config\", False)\n    show_files: bool = arguments.pop(\"show_files\", False)\n    if show_config and show_files:\n        sys.exit(\"Error: either specify show-config or show-files not both.\")\n\n    if \"settings_path\" in arguments:\n        if os.path.isfile(arguments[\"settings_path\"]):\n            arguments[\"settings_file\"] = os.path.abspath(arguments[\"settings_path\"])\n            arguments[\"settings_path\"] = os.path.dirname(arguments[\"settings_file\"])\n        else:\n            arguments[\"settings_path\"] = os.path.abspath(arguments[\"settings_path\"])\n\n    if \"virtual_env\" in arguments:\n        venv = arguments[\"virtual_env\"]\n        arguments[\"virtual_env\"] = os.path.abspath(venv)\n        if not os.path.isdir(arguments[\"virtual_env\"]):\n            warn(f\"virtual_env dir does not exist: {arguments['virtual_env']}\", stacklevel=2)\n\n    file_names = arguments.pop(\"files\", [])\n    if not file_names and not show_config:\n        print(QUICK_GUIDE)\n        if arguments:\n            sys.exit(\"Error: arguments passed in without any paths or content.\")\n        return\n    if \"settings_path\" not in arguments:\n        arguments[\"settings_path\"] = (\n            arguments.get(\"filename\", None) or os.getcwd()\n            if file_names == [\"-\"]\n            else os.path.abspath(file_names[0] if file_names else \".\")\n        )\n        if not os.path.isdir(arguments[\"settings_path\"]):\n            arguments[\"settings_path\"] = os.path.dirname(arguments[\"settings_path\"])\n\n    config_dict = arguments.copy()\n    ask_to_apply = config_dict.pop(\"ask_to_apply\", False)\n    jobs = config_dict.pop(\"jobs\", None)\n    check = config_dict.pop(\"check\", False)\n    show_diff = config_dict.pop(\"show_diff\", False)\n    write_to_stdout = config_dict.pop(\"write_to_stdout\", False)\n    stream_filename = config_dict.pop(\"filename\", None)\n    ext_format = config_dict.pop(\"ext_format\", None)\n    allow_root = config_dict.pop(\"allow_root\", None)\n    resolve_all_configs = config_dict.pop(\"resolve_all_configs\", False)\n    if \"config_root\" in config_dict and not resolve_all_configs:\n        sys.exit(\"Error: --config-root (--cr) has no effect without --resolve-all-configs.\")\n    wrong_sorted_files = False\n    all_attempt_broken = False\n    no_valid_encodings = False\n\n    config_trie: Trie | None = None\n    if resolve_all_configs:\n        config_trie = find_all_configs(config_dict.pop(\"config_root\", \".\"))\n\n    if \"src_paths\" in config_dict:\n        # Keep CLI-provided values as-is so wildcard patterns can be expanded later\n        # relative to the resolved config directory.\n        config_dict[\"src_paths\"] = set(config_dict.get(\"src_paths\", ()))\n\n    config = Config(**config_dict)\n    if show_config:\n        print(json.dumps(asdict(config), indent=4, separators=(\",\", \": \"), default=_preconvert))\n        return\n    if file_names == [\"-\"]:\n        file_path = Path(stream_filename) if stream_filename else None\n        if show_files:\n            sys.exit(\"Error: can't show files for streaming input.\")\n        if config.sort_reexports:\n            sys.exit(\"Error: --sort-reexports is not supported with streaming input (stdin).\")\n\n        with _stream_with_preserved_newlines(\n            sys.stdin if stdin is None else stdin,\n            mode=\"r\",\n        ) as input_stream:\n            if check:\n                incorrectly_sorted = not api.check_stream(\n                    input_stream=input_stream,\n                    config=config,\n                    show_diff=show_diff,\n                    file_path=file_path,\n                    extension=ext_format,\n                )\n\n                wrong_sorted_files = incorrectly_sorted\n            else:\n                with _stream_with_preserved_newlines(sys.stdout, mode=\"w\") as output_stream:\n                    try:\n                        api.sort_stream(\n                            input_stream=input_stream,\n                            output_stream=output_stream,\n                            config=config,\n                            show_diff=show_diff,\n                            file_path=file_path,\n                            extension=ext_format,\n                            raise_on_skip=False,\n                        )\n                    except FileSkipped:\n                        output_stream.write(input_stream.read())\n    elif \"/\" in file_names and not allow_root:\n        printer = create_terminal_printer(\n            color=config.color_output, error=config.format_error, success=config.format_success\n        )\n        printer.error(\"it is dangerous to operate recursively on '/'\")\n        printer.error(\"use --allow-root to override this failsafe\")\n        sys.exit(1)\n    else:\n        if stream_filename:\n            printer = create_terminal_printer(\n                color=config.color_output, error=config.format_error, success=config.format_success\n            )\n            printer.error(\"Filename override is intended only for stream (-) sorting.\")\n            sys.exit(1)\n        skipped: list[str] = []\n        broken: list[str] = []\n\n        if config.filter_files:\n            filtered_files = []\n            for file_name in file_names:\n                if config.is_skipped(Path(file_name)):\n                    skipped.append(str(Path(file_name).resolve()))\n                else:\n                    filtered_files.append(file_name)\n            file_names = filtered_files\n\n        file_names = files.find(file_names, config, skipped, broken)\n        if show_files:\n            for file_name in file_names:\n                print(file_name)\n            return\n        num_skipped = 0\n        num_broken = 0\n        num_invalid_encoding = 0\n\n        if jobs:\n            import multiprocessing.pool  # noqa: PLC0415\n\n            executor_ctx: multiprocessing.pool.Pool | AbstractContextManager[None] = (\n                multiprocessing.pool.Pool(jobs if jobs > 0 else multiprocessing.cpu_count())\n            )\n        else:\n            executor_ctx = nullcontext()\n\n        with executor_ctx as executor:\n            if executor is not None:\n                attempt_iterator: Iterator[SortAttempt | None] = executor.imap(\n                    functools.partial(\n                        sort_imports,\n                        config=config,\n                        check=check,\n                        ask_to_apply=ask_to_apply,\n                        show_diff=show_diff,\n                        write_to_stdout=write_to_stdout,\n                        extension=ext_format,\n                        config_trie=config_trie,\n                    ),\n                    file_names,\n                )\n            else:\n                # https://github.com/python/typeshed/pull/2814\n                attempt_iterator = (\n                    sort_imports(\n                        file_name,\n                        config=config,\n                        check=check,\n                        ask_to_apply=ask_to_apply,\n                        show_diff=show_diff,\n                        write_to_stdout=write_to_stdout,\n                        extension=ext_format,\n                        config_trie=config_trie,\n                    )\n                    for file_name in file_names\n                )\n\n            # If any files passed in are missing considered as error, should be removed\n            is_no_attempt = True\n            any_encoding_valid = False\n            for sort_attempt in attempt_iterator:\n                if not sort_attempt:\n                    continue  # pragma: no cover - shouldn't happen, satisfies type constraint\n                incorrectly_sorted = sort_attempt.incorrectly_sorted\n                if arguments.get(\"check\", False) and incorrectly_sorted:\n                    wrong_sorted_files = True\n                if sort_attempt.skipped:\n                    num_skipped += (\n                        1  # pragma: no cover - shouldn't happen, due to skip in iter_source_code\n                    )\n\n                if not sort_attempt.supported_encoding:\n                    num_invalid_encoding += 1\n                else:\n                    any_encoding_valid = True\n\n                is_no_attempt = False\n\n        num_skipped += len(skipped)\n        if num_skipped and not config.quiet:\n            if config.verbose:\n                for was_skipped in skipped:\n                    print(\n                        f\"{was_skipped} was skipped as it's listed in 'skip' setting, \"\n                        \"matches a glob in 'skip_glob' setting, or is in a .gitignore file with \"\n                        \"--skip-gitignore enabled.\"\n                    )\n            print(f\"Skipped {num_skipped} files\")\n\n        num_broken += len(broken)\n        if num_broken and not config.quiet:\n            if config.verbose:\n                for was_broken in broken:\n                    warn(\n                        f\"{was_broken} was broken path, make sure it exists correctly\", stacklevel=2\n                    )\n            print(f\"Broken {num_broken} paths\")\n\n        if num_broken > 0 and is_no_attempt:\n            all_attempt_broken = True\n        if num_invalid_encoding > 0 and not any_encoding_valid:\n            no_valid_encodings = True\n\n    if wrong_sorted_files:\n        sys.exit(1)\n\n    if all_attempt_broken:\n        sys.exit(1)\n\n    if no_valid_encodings:\n        printer = create_terminal_printer(\n            color=config.color_output, error=config.format_error, success=config.format_success\n        )\n        printer.error(\"No valid encodings.\")\n        sys.exit(1)\n\n\nif __name__ == \"__main__\":\n    main()\n"
+     }
+    }
+   ],
+   "llm_call_count": 0
+  },
+  {
+   "step_id": 4,
+   "timestamp": "2026-11-07T18:43:47.678Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_2",
+      "content": "[exit code 0]"
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": 0,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.22,
+     "raw_chars": 13
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_2",
+     "function_name": "bash",
+     "arguments": {
+      "command": "rm -f -- 'isort/logo.py'"
+     }
+    }
+   ],
+   "llm_call_count": 0
+  },
+  {
+   "step_id": 5,
+   "timestamp": "2026-11-07T18:43:47.972Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_3",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_3",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 5,
+  "extra": {
+   "repogym": {
+    "reward": 1,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 1,
+     "fail_to_pass_passed": 2,
+     "fail_to_pass_total": 2,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 22,
+     "fail_to_pass_failed": [],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 108,
+     "error": "",
+     "peak_memory_bytes": 265576448,
+     "seconds": 8.6
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "PyCQA__isort-2726",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "c573925b7f7bb505",
+   "image_digest": "sha256:35a2484b9aff69959407f3d21388bad41f5f463ef07d223eb533271a7b6c30e9",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

@@ -1,0 +1,282 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-dev-oracle",
+ "trajectory_id": "a934005c17c52f6a",
+ "agent": {
+  "name": "repogym-oracle",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-07T18:42:59.484Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-07T18:42:59.484Z",
+   "source": "user",
+   "message": "# Inference on namedtuples called with rename=True won't give all the fields\n\nOriginally reported by: **BitBucket: [ceridwenv](http://bitbucket.org/ceridwenv), GitHub: @ceridwen**\n\n---\n\nRename changes the field names but `brain_namedtuple_enum` doesn't handle this.\n\n```python\n>>> from astroid import test_utils\n>>> result = test_utils.extract_node('''\n... from collections import namedtuple\n... namedtuple('a', 'a a a', rename=True)(1, 2, 3) #@\n... ''')\n>>> result\n<Call l.3 at 0x7fa004acd6a0>\n>>> next(result.infer())\n<Instance of .a at 0x140325316097248>\n>>> i = next(result.infer())\n>>> i.instance_attrs\n{'a': [<EmptyNode.a l.3 at 0x7fa004ae3b70>]}\n>>> from collections import namedtuple\n>>> n = namedtuple('a', 'a a a', rename=True)\n>>> dir(n)\n['_1', '_2', '__add__', '__class__', '__contains__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__getitem__', '__getnewargs__', '__getstate__', '__gt__', '__hash__', '__init__', '__iter__', '__le__', '__len__', '__lt__', '__module__', '__mul__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__rmul__', '__setattr__', '__sizeof__', '__slots__', '__str__', '__subclasshook__', '_asdict', '_fields', '_make', '_replace', '_source', 'a', 'count', 'index']\n>>> namedtuple('a', 'a a a', rename=True)(1, 2, 3)\na(a=1, _1=2, _2=3)\n```\n\n---\n\n### Confirmed still reproducing on astroid 4.2.0b3 (2026-05-25)\n\nThe brain still keeps the original (invalid) names in `instance_attrs` instead of substituting `_1`, `_2`, … for each duplicate or keyword-named field. Two synthetic cases:\n\n```python\nimport astroid\n\n# Case 1: 'def' is a Python keyword -> at runtime it becomes _1\nnode = astroid.extract_node('''\nfrom collections import namedtuple\nTag = namedtuple(\"Tag\", [\"id\", \"def\", \"a\"], rename=True)\nTag(1, 2, 3)  #@\n''')\ninferred = next(node.infer())\nprint(sorted(inferred.instance_attrs.keys()))\n# astroid 4.2.0b3 -> ['a', 'def', 'id']\n# real Python    -> ['_1', 'a', 'id']     (def renamed)\n\n# Case 2: duplicate 'a' -> the second one becomes _1 at runtime\nnode = astroid.extract_node('''\nfrom collections import namedtuple\nT = namedtuple(\"T\", [\"a\", \"a\", \"b\"], rename=True)\nT(1, 2, 3)  #@\n''')\ninferred = next(node.infer())\nprint(sorted(inferred.instance_attrs.keys()))\n# astroid 4.2.0b3 -> ['a', 'b']           (duplicate silently collapsed)\n# real Python    -> ['_1', 'a', 'b']      (duplicate renamed)\n```\n\nProbable fix site: `brain_namedtuple_enum.py` — when `rename=True` is passed, replicate CPython's `collections.namedtuple` rename logic (invalid names, keywords, leading underscores, duplicates → `_N`).\n\n---\n- Bitbucket: https://bitbucket.org/logilab/astroid/issue/242"
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-07T18:42:59.484Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "overwrote astroid/brain/brain_namedtuple_enum.py (713 lines)"
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.22,
+     "raw_chars": 60
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "create_file",
+     "arguments": {
+      "path": "astroid/brain/brain_namedtuple_enum.py",
+      "content": "# Licensed under the LGPL: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html\n# For details: https://github.com/pylint-dev/astroid/blob/main/LICENSE\n# Copyright (c) https://github.com/pylint-dev/astroid/blob/main/CONTRIBUTORS.txt\n\n\"\"\"Astroid hooks for the Python standard library.\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\nimport keyword\nimport unicodedata\nfrom collections.abc import Iterator\nfrom textwrap import dedent\nfrom typing import Final\n\nfrom astroid import arguments, bases, nodes, util\nfrom astroid.builder import AstroidBuilder, _extract_single_node, extract_node\nfrom astroid.context import InferenceContext\nfrom astroid.exceptions import (\n    AstroidError,\n    AstroidTypeError,\n    AstroidValueError,\n    InferenceError,\n    MroError,\n    UseInferenceDefault,\n)\nfrom astroid.inference_tip import inference_tip\nfrom astroid.manager import AstroidManager\nfrom astroid.nodes.scoped_nodes.scoped_nodes import SYNTHETIC_ROOT\n\nENUM_QNAME: Final[str] = \"enum.Enum\"\nTYPING_NAMEDTUPLE_QUALIFIED: Final = {\n    \"typing.NamedTuple\",\n    \"typing_extensions.NamedTuple\",\n}\nTYPING_NAMEDTUPLE_BASENAMES: Final = {\n    \"NamedTuple\",\n    \"typing.NamedTuple\",\n    \"typing_extensions.NamedTuple\",\n}\n\n\ndef _infer_first(node, context):\n    if isinstance(node, util.UninferableBase):\n        raise UseInferenceDefault\n    try:\n        value = next(node.infer(context=context))\n    except StopIteration as exc:\n        raise InferenceError from exc\n    if isinstance(value, util.UninferableBase):\n        raise UseInferenceDefault()\n    return value\n\n\ndef _find_func_form_arguments(node, context):\n    def _extract_namedtuple_arg_or_keyword(  # pylint: disable=inconsistent-return-statements\n        position, key_name=None\n    ):\n        if len(args) > position:\n            return _infer_first(args[position], context)\n        if key_name and key_name in found_keywords:\n            return _infer_first(found_keywords[key_name], context)\n\n    args = node.args\n    keywords = node.keywords\n    found_keywords = (\n        {keyword.arg: keyword.value for keyword in keywords} if keywords else {}\n    )\n\n    name = _extract_namedtuple_arg_or_keyword(position=0, key_name=\"typename\")\n    names = _extract_namedtuple_arg_or_keyword(position=1, key_name=\"field_names\")\n    if name and names:\n        return name.value, names\n\n    raise UseInferenceDefault()\n\n\ndef infer_func_form(\n    node: nodes.Call,\n    base_type: nodes.NodeNG,\n    *,\n    parent: nodes.NodeNG,\n    context: InferenceContext | None = None,\n    enum: bool = False,\n) -> tuple[nodes.ClassDef, str, list[str]]:\n    \"\"\"Specific inference function for namedtuple or Python 3 enum.\"\"\"\n    # node is a Call node, class name as first argument and generated class\n    # attributes as second argument\n\n    # namedtuple or enums list of attributes can be a list of strings or a\n    # whitespace-separate string\n    try:\n        name, names = _find_func_form_arguments(node, context)\n        try:\n            attributes: list[str] = names.value.replace(\",\", \" \").split()\n        except (AttributeError, TypeError) as exc:\n            # ``names`` is not a whitespace-separated string: it is either a\n            # container node, which has no ``value`` (AttributeError), or a\n            # constant of another type such as bytes (TypeError).\n\n            # Handle attributes of NamedTuples\n            if not enum:\n                attributes = []\n                fields = _get_namedtuple_fields(node)\n                if fields:\n                    fields_node = extract_node(fields)\n                    attributes = [\n                        _infer_first(const, context).value for const in fields_node.elts\n                    ]\n\n            # Handle attributes of Enums\n            else:\n                # Enums supports either iterator of (name, value) pairs\n                # or mappings.\n                if hasattr(names, \"items\") and isinstance(names.items, list):\n                    attributes = [\n                        _infer_first(const[0], context).value\n                        for const in names.items\n                        if isinstance(const[0], nodes.Const)\n                    ]\n                elif hasattr(names, \"elts\"):\n                    # Enums can support either [\"a\", \"b\", \"c\"]\n                    # or [(\"a\", 1), (\"b\", 2), ...], but they can't\n                    # be mixed.\n                    if all(isinstance(const, nodes.Tuple) for const in names.elts):\n                        attributes = [\n                            _infer_first(const.elts[0], context).value\n                            for const in names.elts\n                            if isinstance(const, nodes.Tuple)\n                        ]\n                    else:\n                        attributes = [\n                            _infer_first(const, context).value for const in names.elts\n                        ]\n                else:\n                    raise AttributeError from exc\n                if not attributes:\n                    raise AttributeError from exc\n    except (AttributeError, InferenceError) as exc:\n        raise UseInferenceDefault from exc\n\n    if not enum:\n        # namedtuple maps sys.intern(str()) over over field_names\n        attributes = [str(attr) for attr in attributes]\n        # XXX this should succeed *unless* __str__/__repr__ is incorrect or throws\n        # in which case we should not have inferred these values and raised earlier\n    if any(not isinstance(attr, str) for attr in attributes):\n        # Enum members must be named by strings; a non-string attribute (e.g.\n        # ``Enum(\"e\", (1,))``) means the definition is invalid, so fall back to\n        # the default inference instead of crashing.\n        raise UseInferenceDefault\n    attributes = [attr for attr in attributes if \" \" not in attr]\n\n    # If we can't infer the name of the class, don't crash, up to this point\n    # we know it is a namedtuple anyway.\n    name = name or \"Uninferable\"\n    # we want to return a Class node instance with proper attributes set\n    class_node = nodes.ClassDef(\n        name,\n        lineno=node.lineno,\n        col_offset=node.col_offset,\n        end_lineno=node.end_lineno,\n        end_col_offset=node.end_col_offset,\n        parent=parent,\n    )\n    class_node.postinit(\n        bases=[base_type],\n        body=[],\n        decorators=None,\n    )\n    # XXX add __init__(*attributes) method\n    for attr in attributes:\n        fake_node = nodes.EmptyNode()\n        fake_node.parent = class_node\n        fake_node.attrname = attr\n        class_node.instance_attrs[attr] = [fake_node]\n    return class_node, name, attributes\n\n\ndef _has_namedtuple_base(node):\n    \"\"\"Predicate for class inference tip.\n\n    :type node: ClassDef\n    :rtype: bool\n    \"\"\"\n    return set(node.basenames) & TYPING_NAMEDTUPLE_BASENAMES\n\n\ndef _looks_like(node, name) -> bool:\n    func = node.func\n    if isinstance(func, nodes.Attribute):\n        return func.attrname == name\n    if isinstance(func, nodes.Name):\n        return func.name == name\n    return False\n\n\n_looks_like_namedtuple = functools.partial(_looks_like, name=\"namedtuple\")\n_looks_like_enum = functools.partial(_looks_like, name=\"Enum\")\n_looks_like_typing_namedtuple = functools.partial(_looks_like, name=\"NamedTuple\")\n\n\ndef infer_named_tuple(\n    node: nodes.Call, context: InferenceContext | None = None\n) -> Iterator[nodes.ClassDef]:\n    \"\"\"Specific inference function for namedtuple Call node.\"\"\"\n    tuple_base: nodes.Name = _extract_single_node(\"tuple\")\n    class_node, name, attributes = infer_func_form(\n        node, tuple_base, parent=SYNTHETIC_ROOT, context=context\n    )\n\n    call_site = arguments.CallSite.from_call(node, context=context)\n    func = util.safe_infer(\n        _extract_single_node(\"import collections; collections.namedtuple\")\n    )\n    assert isinstance(func, nodes.NodeNG)\n    try:\n        rename_arg_bool_value = next(\n            call_site.infer_argument(func, \"rename\", context or InferenceContext())\n        ).bool_value()\n        rename = rename_arg_bool_value is True\n    except (InferenceError, StopIteration):\n        rename = False\n\n    try:\n        attributes = _check_namedtuple_attributes(name, attributes, rename)\n    except AstroidTypeError as exc:\n        raise UseInferenceDefault(\"TypeError: \" + str(exc)) from exc\n    except AstroidValueError as exc:\n        raise UseInferenceDefault(\"ValueError: \" + str(exc)) from exc\n\n    if tuple(class_node.instance_attrs) != tuple(attributes):\n        # ``infer_func_form`` recorded the field names as written, but ``rename=True``\n        # replaces invalid, keyword or duplicate names with ``_N``, so the instance\n        # would otherwise carry names the namedtuple does not actually have (and lose\n        # the duplicated ones entirely). Rebuild them from the renamed fields.\n        class_node.instance_attrs.clear()\n        for attr in attributes:\n            fake_node = nodes.EmptyNode()\n            fake_node.parent = class_node\n            fake_node.attrname = attr\n            class_node.instance_attrs[attr] = [fake_node]\n\n    replace_args = \", \".join(f\"{arg}=None\" for arg in attributes)\n    field_def = (\n        \"    {name} = property(lambda self: self[{index:d}], \"\n        \"doc='Alias for field number {index:d}')\"\n    )\n    field_defs = \"\\n\".join(\n        field_def.format(name=name, index=index)\n        for index, name in enumerate(attributes)\n    )\n    fake = AstroidBuilder(AstroidManager()).string_build(f\"\"\"\nclass {name}(tuple):\n    __slots__ = ()\n    _fields = {attributes!r}\n    def _asdict(self):\n        return self.__dict__\n    @classmethod\n    def _make(cls, iterable, new=tuple.__new__, len=len):\n        return new(cls, iterable)\n    def _replace(self, {replace_args}):\n        return self\n    def __getnewargs__(self):\n        return tuple(self)\n{field_defs}\n    \"\"\")\n    class_node.locals[\"_asdict\"] = fake.body[0].locals[\"_asdict\"]\n    class_node.locals[\"_make\"] = fake.body[0].locals[\"_make\"]\n    class_node.locals[\"_replace\"] = fake.body[0].locals[\"_replace\"]\n    class_node.locals[\"_fields\"] = fake.body[0].locals[\"_fields\"]\n    for attr in attributes:\n        # Python normalises identifiers to NFKC, so a field named \"\\u00b5\" (MICRO SIGN)\n        # is stored by the parser as \"\\u03bc\" (GREEK SMALL LETTER MU). Looking the\n        # attribute up under the name as written raises KeyError on a definition\n        # namedtuple itself accepts, so use the name the parser actually used.\n        normalized = unicodedata.normalize(\"NFKC\", attr)\n        class_node.locals[normalized] = fake.body[0].locals[normalized]\n    # we use UseInferenceDefault, we can't be a generator so return an iterator\n    return iter([class_node])\n\n\ndef _get_renamed_namedtuple_attributes(field_names):\n    names = list(field_names)\n    seen = set()\n    for i, name in enumerate(field_names):\n        # pylint: disable = too-many-boolean-expressions\n        if (\n            not all(c.isalnum() or c == \"_\" for c in name)\n            or keyword.iskeyword(name)\n            or not name\n            or name[0].isdigit()\n            or name.startswith(\"_\")\n            or name in seen\n        ):\n            names[i] = f\"_{i}\"\n        seen.add(name)\n    return tuple(names)\n\n\ndef _check_namedtuple_attributes(typename, attributes, rename=False):\n    attributes = tuple(attributes)\n    if rename:\n        attributes = _get_renamed_namedtuple_attributes(attributes)\n\n    # The following snippet is derived from the CPython Lib/collections/__init__.py sources\n    # <snippet>\n    for name in (typename, *attributes):\n        if not isinstance(name, str):\n            raise AstroidTypeError(\n                f\"Type names and field names must be strings, not {type(name)!r}\"\n            )\n        if not name.isidentifier():\n            raise AstroidValueError(\n                \"Type names and field names must be valid\" + f\"identifiers: {name!r}\"\n            )\n        if keyword.iskeyword(name):\n            raise AstroidValueError(\n                f\"Type names and field names cannot be a keyword: {name!r}\"\n            )\n\n    seen = set()\n    for name in attributes:\n        if name.startswith(\"_\") and not rename:\n            raise AstroidValueError(\n                f\"Field names cannot start with an underscore: {name!r}\"\n            )\n        if name in seen:\n            raise AstroidValueError(f\"Encountered duplicate field name: {name!r}\")\n        seen.add(name)\n    # </snippet>\n\n    return attributes\n\n\ndef infer_enum(\n    node: nodes.Call, context: InferenceContext | None = None\n) -> Iterator[bases.Instance]:\n    \"\"\"Specific inference function for enum Call node.\"\"\"\n    # Raise `UseInferenceDefault` if `node` is a call to a a user-defined Enum.\n    try:\n        inferred = node.func.infer(context)\n    except (InferenceError, StopIteration) as exc:\n        raise UseInferenceDefault from exc\n\n    if not any(\n        isinstance(item, nodes.ClassDef) and item.qname() == ENUM_QNAME\n        for item in inferred\n    ):\n        raise UseInferenceDefault\n\n    enum_meta = _extract_single_node(\"\"\"\n    class EnumMeta(object):\n        'docstring'\n        def __call__(self, node):\n            class EnumAttribute(object):\n                name = ''\n                value = 0\n            return EnumAttribute()\n        def __iter__(self):\n            class EnumAttribute(object):\n                name = ''\n                value = 0\n            return [EnumAttribute()]\n        def __reversed__(self):\n            class EnumAttribute(object):\n                name = ''\n                value = 0\n            return (EnumAttribute, )\n        def __next__(self):\n            return next(iter(self))\n        def __getitem__(self, attr):\n            class Value(object):\n                @property\n                def name(self):\n                    return ''\n                @property\n                def value(self):\n                    return attr\n\n            return Value()\n        __members__ = ['']\n    \"\"\")\n\n    # FIXME arguably, the base here shouldn't be the EnumMeta class definition\n    # itself, but a reference (Name) to it. Otherwise, the invariant that all\n    # children of a node have that node as their parent is broken.\n    class_node = infer_func_form(\n        node,\n        enum_meta,\n        parent=SYNTHETIC_ROOT,\n        context=context,\n        enum=True,\n    )[0]\n    return iter([class_node.instantiate_class()])\n\n\nINT_FLAG_ADDITION_METHODS = \"\"\"\n    def __or__(self, other):\n        return {name}(self.value | other.value)\n    def __and__(self, other):\n        return {name}(self.value & other.value)\n    def __xor__(self, other):\n        return {name}(self.value ^ other.value)\n    def __add__(self, other):\n        return {name}(self.value + other.value)\n    def __div__(self, other):\n        return {name}(self.value / other.value)\n    def __invert__(self):\n        return {name}(~self.value)\n    def __mul__(self, other):\n        return {name}(self.value * other.value)\n\"\"\"\n\n\ndef infer_enum_class(node: nodes.ClassDef) -> nodes.ClassDef:\n    \"\"\"Specific inference for enums.\"\"\"\n    try:\n        mro = node.mro()\n    except MroError:\n        # A malformed class hierarchy (e.g. duplicate bases) has no resolvable\n        # MRO; leave the node untransformed rather than crashing.\n        return node\n    for basename in (b for cls in mro for b in cls.basenames):\n        if node.root().name == \"enum\":\n            # Skip if the class is directly from enum module.\n            break\n        dunder_members = {}\n        target_names = set()\n        for local, values in node.locals.items():\n            if (\n                any(not isinstance(value, nodes.AssignName) for value in values)\n                or local == \"_ignore_\"\n            ):\n                continue\n\n            stmt = values[0].statement()\n            if isinstance(stmt, nodes.Assign):\n                if isinstance(stmt.targets[0], nodes.Tuple):\n                    targets = stmt.targets[0].itered()\n                else:\n                    targets = stmt.targets\n            elif isinstance(stmt, nodes.AnnAssign):\n                targets = [stmt.target]\n            else:\n                continue\n\n            inferred_return_value = None\n            if stmt.value is not None:\n                if isinstance(stmt.value, nodes.Const):\n                    if isinstance(stmt.value.value, str):\n                        inferred_return_value = repr(stmt.value.value)\n                    else:\n                        inferred_return_value = stmt.value.value\n                else:\n                    inferred_return_value = stmt.value.as_string()\n\n            new_targets = []\n            for target in targets:\n                if isinstance(target, nodes.Starred):\n                    continue\n                target_names.add(target.name)\n                # Replace all the assignments with our mocked class.\n                classdef = dedent(\n                    \"\"\"\n                class {name}({types}):\n                    @property\n                    def value(self):\n                        return {return_value}\n                    @property\n                    def _value_(self):\n                        return {return_value}\n                    @property\n                    def name(self):\n                        return \"{name}\"\n                    @property\n                    def _name_(self):\n                        return \"{name}\"\n                \"\"\".format(\n                        name=target.name,\n                        types=\", \".join(node.basenames),\n                        return_value=inferred_return_value,\n                    )\n                )\n                if \"IntFlag\" in basename:\n                    # Alright, we need to add some additional methods.\n                    # Unfortunately we still can't infer the resulting objects as\n                    # Enum members, but once we'll be able to do that, the following\n                    # should result in some nice symbolic execution\n                    classdef += INT_FLAG_ADDITION_METHODS.format(name=target.name)\n\n                fake = AstroidBuilder(\n                    AstroidManager(), apply_transforms=False\n                ).string_build(classdef)[target.name]\n                fake.parent = target.parent\n                for method in node.mymethods():\n                    fake.locals[method.name] = [method]\n                new_targets.append(fake.instantiate_class())\n                if stmt.value is None:\n                    continue\n                dunder_members[local] = fake\n            node.locals[local] = new_targets\n\n        # The undocumented `_value2member_map_` member:\n        node.locals[\"_value2member_map_\"] = [\n            nodes.Dict(\n                parent=node,\n                lineno=node.lineno,\n                col_offset=node.col_offset,\n                end_lineno=node.end_lineno,\n                end_col_offset=node.end_col_offset,\n            )\n        ]\n\n        members = nodes.Dict(\n            parent=node,\n            lineno=node.lineno,\n            col_offset=node.col_offset,\n            end_lineno=node.end_lineno,\n            end_col_offset=node.end_col_offset,\n        )\n        members.postinit(\n            [\n                (\n                    nodes.Const(k, parent=members),\n                    nodes.Name(\n                        v.name,\n                        parent=members,\n                        lineno=v.lineno,\n                        col_offset=v.col_offset,\n                        end_lineno=v.end_lineno,\n                        end_col_offset=v.end_col_offset,\n                    ),\n                )\n                for k, v in dunder_members.items()\n            ]\n        )\n        node.locals[\"__members__\"] = [members]\n        # The enum.Enum class itself defines two @DynamicClassAttribute data-descriptors\n        # \"name\" and \"value\" (which we override in the mocked class for each enum member\n        # above). When dealing with inference of an arbitrary instance of the enum\n        # class, e.g. in a method defined in the class body like:\n        #     class SomeEnum(enum.Enum):\n        #         def method(self):\n        #             self.name  # <- here\n        # In the absence of an enum member called \"name\" or \"value\", these attributes\n        # should resolve to the descriptor on that particular instance, i.e. enum member.\n        # For \"value\", we have no idea what that should be, but for \"name\", we at least\n        # know that it should be a string, so infer that as a guess.\n        if \"name\" not in target_names:\n            code = dedent('''\n                @property\n                def name(self):\n                    \"\"\"The name of the Enum member.\n\n                    This is a reconstruction by astroid: enums are too dynamic to understand, but we at least\n                    know 'name' should be a string, so this is astroid's best guess.\n                    \"\"\"\n                    return ''\n                ''')\n            name_dynamicclassattr = AstroidBuilder(AstroidManager()).string_build(code)[\n                \"name\"\n            ]\n            node.locals[\"name\"] = [name_dynamicclassattr]\n        break\n    return node\n\n\ndef infer_typing_namedtuple_class(class_node, context: InferenceContext | None = None):\n    \"\"\"Infer a subclass of typing.NamedTuple.\"\"\"\n    # Check if it has the corresponding bases\n    annassigns_fields = [\n        annassign.target.name\n        for annassign in class_node.body\n        if isinstance(annassign, nodes.AnnAssign)\n    ]\n    code = dedent(\"\"\"\n    from collections import namedtuple\n    namedtuple({typename!r}, {fields!r})\n    \"\"\").format(typename=class_node.name, fields=\",\".join(annassigns_fields))\n    node = extract_node(code)\n    try:\n        generated_class_node = next(infer_named_tuple(node, context))\n    except StopIteration as e:\n        raise InferenceError(node=node, context=context) from e\n    for method in class_node.mymethods():\n        generated_class_node.locals[method.name] = [method]\n\n    for body_node in class_node.body:\n        if isinstance(body_node, nodes.Assign):\n            for target in body_node.targets:\n                # A target is not necessarily a single name: ``cat.color = ...``\n                # and ``basket[0] = ...`` define no class attribute at all, while\n                # ``apple, banana = ...`` defines one per unpacked element.\n                for assign_name in target.nodes_of_class(nodes.AssignName):\n                    attr = assign_name.name\n                    generated_class_node.locals[attr] = class_node.locals[attr]\n        elif isinstance(body_node, nodes.ClassDef):\n            generated_class_node.locals[body_node.name] = [body_node]\n\n    return iter((generated_class_node,))\n\n\ndef infer_typing_namedtuple_function(node, context: InferenceContext | None = None):\n    \"\"\"\n    Starting with python3.9, NamedTuple is a function of the typing module.\n    The class NamedTuple is build dynamically through a call to `type` during\n    initialization of the `_NamedTuple` variable.\n    \"\"\"\n    klass = extract_node(\"\"\"\n        from typing import _NamedTuple\n        _NamedTuple\n        \"\"\")\n    return klass.infer(context)\n\n\ndef infer_typing_namedtuple(\n    node: nodes.Call, context: InferenceContext | None = None\n) -> Iterator[nodes.ClassDef]:\n    \"\"\"Infer a typing.NamedTuple(...) call.\"\"\"\n    # This is essentially a namedtuple with different arguments\n    # so we extract the args and infer a named tuple.\n    try:\n        func = next(node.func.infer())\n    except (InferenceError, StopIteration) as exc:\n        raise UseInferenceDefault from exc\n\n    if func.qname() not in TYPING_NAMEDTUPLE_QUALIFIED:\n        raise UseInferenceDefault\n\n    if len(node.args) != 2:\n        raise UseInferenceDefault\n\n    if not isinstance(node.args[1], (nodes.List, nodes.Tuple)):\n        raise UseInferenceDefault\n\n    return infer_named_tuple(node, context)\n\n\ndef _get_namedtuple_fields(node: nodes.Call) -> str:\n    \"\"\"Get and return fields of a NamedTuple in code-as-a-string.\n\n    Because the fields are represented in their code form we can\n    extract a node from them later on.\n    \"\"\"\n    names = []\n    container = None\n    try:\n        container = next(node.args[1].infer())\n    except (InferenceError, StopIteration) as exc:\n        raise UseInferenceDefault from exc\n    # We pass on IndexError as we'll try to infer 'field_names' from the keywords\n    except IndexError:\n        pass\n    if not container:\n        for keyword_node in node.keywords:\n            if keyword_node.arg == \"field_names\":\n                try:\n                    container = next(keyword_node.value.infer())\n                except (InferenceError, StopIteration) as exc:\n                    raise UseInferenceDefault from exc\n                break\n    if not isinstance(container, nodes.BaseContainer):\n        raise UseInferenceDefault\n    for elt in container.elts:\n        if isinstance(elt, nodes.Const):\n            names.append(elt.as_string())\n            continue\n        if not isinstance(elt, (nodes.List, nodes.Tuple)):\n            raise UseInferenceDefault\n        if len(elt.elts) != 2:\n            raise UseInferenceDefault\n        names.append(elt.elts[0].as_string())\n\n    if names:\n        field_names = f\"({','.join(names)},)\"\n    else:\n        field_names = \"\"\n    return field_names\n\n\ndef _is_enum_subclass(cls: nodes.ClassDef) -> bool:\n    \"\"\"Return whether cls is a subclass of an Enum.\"\"\"\n    try:\n        return cls.is_subtype_of(\"enum.Enum\")\n    except AstroidError:\n        return False\n\n\ndef register(manager: AstroidManager) -> None:\n    manager.register_transform(\n        nodes.Call, inference_tip(infer_named_tuple), _looks_like_namedtuple\n    )\n    manager.register_transform(nodes.Call, inference_tip(infer_enum), _looks_like_enum)\n    manager.register_transform(\n        nodes.ClassDef, infer_enum_class, predicate=_is_enum_subclass\n    )\n    manager.register_transform(\n        nodes.ClassDef,\n        inference_tip(infer_typing_namedtuple_class),\n        _has_namedtuple_base,\n    )\n    manager.register_transform(\n        nodes.FunctionDef,\n        inference_tip(infer_typing_namedtuple_function),\n        lambda node: node.name == \"NamedTuple\"\n        and getattr(node.root(), \"name\", None) == \"typing\",\n    )\n    manager.register_transform(\n        nodes.Call,\n        inference_tip(infer_typing_namedtuple),\n        _looks_like_typing_namedtuple,\n    )\n"
+     }
+    }
+   ],
+   "llm_call_count": 0
+  },
+  {
+   "step_id": 4,
+   "timestamp": "2026-11-07T18:42:59.778Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_2",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_2",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 4,
+  "extra": {
+   "repogym": {
+    "reward": 1,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 1,
+     "fail_to_pass_passed": 2,
+     "fail_to_pass_total": 2,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 23,
+     "fail_to_pass_failed": [],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 23,
+     "error": "",
+     "peak_memory_bytes": 71118848,
+     "seconds": 4.5
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "pylint-dev__astroid-3213",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "a934005c17c52f6a",
+   "image_digest": "sha256:c75d6b78f8d2dc408807bb0db675deac4002c075a2a5bb4c451868ec389e5aa1",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

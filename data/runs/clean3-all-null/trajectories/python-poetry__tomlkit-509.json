@@ -1,0 +1,249 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-all-null",
+ "trajectory_id": "64ecfaa4b99827a4",
+ "agent": {
+  "name": "repogym-null",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-08T03:19:39.900Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-08T03:19:39.900Z",
+   "source": "user",
+   "message": "# [Security] Quadratic complexity DoS when parsing dotted keys with shared prefix (CWE-400)\n\nSummary\n\ntomlkit exhibits super-linear time complexity when parsing TOML documents with multiple dotted keys sharing a common prefix. A valid 1.3 KB document causes 8+ seconds of CPU consumption.\n\nAffected version: 0.15.0 (latest)\n\nReproduction:\n\nimport tomlkit\nimport time\n\n# 80 dotted keys with shared prefix — valid TOML, only 1,339 bytes\npayload = \"\\n\".join([f\"a.b.c.key{i} = {i}\" for i in range(80)])\n\nstart = time.time()\ntomlkit.parse(payload)\nprint(f\"Elapsed: {time.time() - start:.2f}s\")  # ~8 seconds\n\n\nExpected behavior: Parsing should complete in milliseconds (tomli handles this in 0.3ms).\n\nActual behavior: Parsing takes 8+ seconds for 80 keys, with super-linear growth:\n\n10 keys → 0.008s\n40 keys → 0.64s\n80 keys → 8.15s\nGrowth factor: 8x more input → 1,036x more time (O(n³) or worse).\n\nComparison with tomli:\n\nimport tomli\ntomli.loads(payload)  # 0.0003 seconds (25,407x faster)\n\nImpact:\n\nPoetry (30M+ monthly downloads) uses tomlkit to parse pyproject.toml\nA malicious pyproject.toml in a git repository could DoS CI/CD pipelines\nAny application parsing untrusted TOML with tomlkit is vulnerable\nRoot cause: The internal table merging logic for dotted keys appears to re-traverse the table hierarchy for each new key, causing polynomial time complexity when many keys share a prefix path.\n\nWorkaround: Use tomli/tomllib for parsing untrusted TOML input.\n\nCWE: CWE-400 (Uncontrolled Resource Consumption)\n\nDiscovered by: Frédéric Bogaerts, University of Coimbra (VAITP Research Project)"
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-08T03:19:39.900Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 3,
+  "extra": {
+   "repogym": {
+    "reward": 0,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 0,
+     "fail_to_pass_passed": 0,
+     "fail_to_pass_total": 1,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 150,
+     "fail_to_pass_failed": [
+      "tests.test_api::test_parse_many_dotted_keys_with_shared_prefix"
+     ],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 0,
+     "error": "",
+     "peak_memory_bytes": 75804672,
+     "seconds": 34.1
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "python-poetry__tomlkit-509",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "64ecfaa4b99827a4",
+   "image_digest": "sha256:c4632c7bae6dfd77076b4706a78ca49a888242e76994338be39f25f98016923d",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

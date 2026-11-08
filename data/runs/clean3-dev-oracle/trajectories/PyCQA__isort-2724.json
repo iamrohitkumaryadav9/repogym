@@ -1,0 +1,282 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-dev-oracle",
+ "trajectory_id": "ed4a74da6dddc770",
+ "agent": {
+  "name": "repogym-oracle",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-07T18:43:43.801Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-07T18:43:43.801Z",
+   "source": "user",
+   "message": "# combine_straight_imports mixes up module names on long lines since 9.0.0\n\nSince 9.0.0, `combine_straight_imports` can change which modules a file imports. With 9.0.2 and otherwise default settings:\n\n```console\n$ printf 'import email.message\\nimport email.utils\\nimport http.cookies\\nimport importlib.util\\nimport os.path\\nimport urllib.parse\\nimport warnings\\n' > m.py\n$ isort --csi m.py\nFixing /tmp/demo/m.py\n$ cat m.py\nimport email.message, email.utils, http.cookies, importlib.util, os.\\\n    parse, warnings.path, urllib\n$ python m.py\nTraceback (most recent call last):\n  File \"/tmp/demo/m.py\", line 1, in <module>\n    import email.message, email.utils, http.cookies, importlib.util, os.\\\nModuleNotFoundError: No module named 'os.parse'; 'os' is not a package\n```\n\n8.0.1 leaves the combined line as it is, even though it is longer than the line length.\n\nIn CPython 3.12's [`Lib/http/server.py`](https://github.com/python/cpython/blob/v3.12.15/Lib/http/server.py#L90-L106), where `import socket` has a comment, the comment also lands in the middle of the line and comments out most of the imports:\n\n```python\nimport copy, datetime, email.utils, html, http.\\\n    parse  # For gethostbyaddr().client, io, itertools, mimetypes, os, posixpath, select, shutil, socket, socketserver, sys, time, urllib\n```\n\nWith `--profile black` the result for `m.py` does not even parse:\n\n```python\nimport email.message, email.utils, http.cookies, importlib.util, os.path, urllib.(\n    parse, warnings,\n)\n```\n\nBisecting points at 2b07aa52 (#2568), which sends the combined line through `wrap.line()` in every wrap mode so that NOQA mode can add `# NOQA`. `wrap.line()` splits it at the dots and joins the pieces it moves to the next line in reverse order. For single straight imports the same commit only calls `wrap.line()` in NOQA mode, and doing the same for the combined line fixes it. I'll open a pull request with that change and a regression test."
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-07T18:43:43.801Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "overwrote isort/output.py (937 lines)"
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.27,
+     "raw_chars": 37
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "create_file",
+     "arguments": {
+      "path": "isort/output.py",
+      "content": "import copy\nimport itertools\nfrom collections.abc import Iterable\nfrom typing import Literal\n\nfrom isort.format import format_simplified\n\nfrom . import _parse_utils, parse, sorting, wrap, wrap_modes\nfrom .comments import add_to_line as with_comments\nfrom .identify import STATEMENT_DECLARATIONS\nfrom .place import module_with_reason\nfrom .settings import DEFAULT_CONFIG, Config\n\n_WRAP_CHARS_TRANSLATION = str.maketrans(\"\", \"\", \"(),\\\\\")\n\n\ndef _unwrap_for_sort(line: str) -> str:\n    \"\"\"Strip wrapping syntax so sorting keys use the logical import text.\"\"\"\n    code = \" \".join(part.split(\"#\", 1)[0] for part in line.splitlines())\n    return \" \".join(code.translate(_WRAP_CHARS_TRANSLATION).split())\n\n\n# Ignore DeepSource cyclomatic complexity check for this function.\n# skipcq: PY-R1000\ndef sorted_imports(\n    parsed: parse.ParsedContent,\n    config: Config = DEFAULT_CONFIG,\n    extension: str = \"py\",\n    import_type: str = \"import\",\n) -> str:\n    \"\"\"Adds the imports back to the file.\n\n    (at the index of the first import) sorted alphabetically and split between groups\n\n    \"\"\"\n    if parsed.import_index == -1:\n        return _output_as_string(parsed.lines_without_imports, parsed.line_separator)\n\n    formatted_output: list[str] = parsed.lines_without_imports.copy()\n    remove_imports = [format_simplified(removal) for removal in config.remove_imports]\n\n    sections: Iterable[str] = itertools.chain(parsed.sections, config.forced_separate)\n\n    if config.no_sections:\n        parsed.imports[\"no_sections\"] = {\n            \"straight\": {},\n            \"from\": {},\n            \"lazy_straight\": {},\n            \"lazy_from\": {},\n        }\n        base_sections: tuple[str, ...] = ()\n        for section in sections:\n            if section == \"FUTURE\":\n                base_sections = (\"FUTURE\",)\n                continue\n            parsed.imports[\"no_sections\"][\"straight\"].update(parsed.imports[section][\"straight\"])\n            parsed.imports[\"no_sections\"][\"from\"].update(parsed.imports[section][\"from\"])\n            parsed.imports[\"no_sections\"][\"lazy_straight\"].update(\n                parsed.imports[section][\"lazy_straight\"]\n            )\n            parsed.imports[\"no_sections\"][\"lazy_from\"].update(parsed.imports[section][\"lazy_from\"])\n        sections = (*base_sections, \"no_sections\")\n\n    output: list[str] = []\n    seen_headings: set[str] = set()\n    pending_lines_before = False\n    for section in sections:\n        section_output = _build_import_group(\n            parsed, config, section, remove_imports, import_type, is_lazy=False\n        )\n\n        # PEP 810 lazy imports always follow all eager imports within the section.\n        lazy_section_output = _build_import_group(\n            parsed, config, section, remove_imports, import_type, is_lazy=True\n        )\n\n        if lazy_section_output:\n            if section_output:\n                section_output += [\"\"] * config.lines_between_types + lazy_section_output\n            else:\n                section_output = lazy_section_output\n\n        section_name = section\n        no_lines_before = section_name in config.no_lines_before\n\n        if section_output:\n            if section_name in parsed.place_imports:\n                parsed.place_imports[section_name] = section_output\n                continue\n\n            section_title = config.import_headings.get(section_name.lower(), \"\")\n            if section_title and section_title not in seen_headings:\n                if config.dedup_headings:\n                    seen_headings.add(section_title)\n                section_comment = f\"# {section_title}\"\n                if section_comment not in parsed.lines_without_imports[0:1]:  # pragma: no branch\n                    section_output.insert(0, section_comment)\n\n            section_footer = config.import_footers.get(section_name.lower(), \"\")\n            if section_footer and section_footer not in seen_headings:\n                if config.dedup_headings:\n                    seen_headings.add(section_footer)\n                section_comment_end = f\"# {section_footer}\"\n                if (\n                    section_comment_end not in parsed.lines_without_imports[-1:]\n                ):  # pragma: no branch\n                    section_output.append(\"\")  # Empty line for black compatibility\n                    section_output.append(section_comment_end)\n\n            if section in config.separate_packages:\n                section_output = _separate_packages(section_output, config)\n\n            if pending_lines_before or not no_lines_before:\n                output += [\"\"] * config.lines_between_sections\n\n            output += section_output\n\n            pending_lines_before = False\n        else:\n            pending_lines_before = pending_lines_before or not no_lines_before\n\n    if config.ensure_newline_before_comments:\n        output = _ensure_newline_before_comment(output)\n\n    while output and output[-1].strip() == \"\":\n        output.pop()  # pragma: no cover\n    while output and output[0].strip() == \"\":\n        output.pop(0)\n\n    if config.formatting_function:\n        output = config.formatting_function(\n            parsed.line_separator.join(output), extension, config\n        ).splitlines()\n\n    output_at = 0\n    if parsed.import_index < parsed.original_line_count:\n        output_at = parsed.import_index\n    formatted_output[output_at:0] = output\n\n    if output:\n        imports_tail = output_at + len(output)\n        trailing_blank_lines: list[str] = []\n        while [\n            character.strip() for character in formatted_output[imports_tail : imports_tail + 1]\n        ] == [\"\"]:\n            trailing_blank_lines.append(formatted_output.pop(imports_tail))\n\n        if config.lines_before_imports != -1:\n            lines_before_imports = config.lines_before_imports\n            if config.profile == \"black\" and extension == \"pyi\":  # special case for black\n                lines_before_imports = 1\n            formatted_output[:0] = [\"\" for line in range(lines_before_imports)]\n            imports_tail += lines_before_imports\n\n        if len(formatted_output) > imports_tail:\n            next_construct = \"\"\n            tail = formatted_output[imports_tail:]\n\n            for index, line in enumerate(tail):  # pragma: no branch\n                should_skip, in_quote = _parse_utils.skip_line(\n                    line, in_quote=\"\", needs_import=False\n                )\n                if not should_skip and line.strip():\n                    if (\n                        line.strip().startswith(\"#\")\n                        and len(tail) > (index + 1)\n                        and tail[index + 1].strip()\n                    ):\n                        continue\n                    next_construct = line\n                    break\n                if in_quote:  # pragma: no branch\n                    next_construct = line\n                    break\n\n            if config.lines_after_imports != -1:\n                lines_after_imports = config.lines_after_imports\n                if config.profile == \"black\" and extension == \"pyi\":  # special case for black\n                    lines_after_imports = 1\n            elif extension != \"pyi\" and next_construct.startswith(STATEMENT_DECLARATIONS):\n                lines_after_imports = 2\n            else:\n                lines_after_imports = 1\n\n            blank_lines = [\"\"] * lines_after_imports\n            overflow_form_feeds = \"\"\n            for index, line in enumerate(trailing_blank_lines):\n                form_feeds = \"\".join(character for character in line if character == \"\\f\")\n                if index < lines_after_imports:\n                    blank_lines[index] += form_feeds\n                else:\n                    overflow_form_feeds += form_feeds\n            if overflow_form_feeds:\n                formatted_output[imports_tail] = (\n                    overflow_form_feeds + formatted_output[imports_tail]\n                )\n            formatted_output[imports_tail:0] = blank_lines\n\n    if parsed.place_imports:\n        new_out_lines = []\n        for index, line in enumerate(formatted_output):\n            new_out_lines.append(line)\n            if line in parsed.import_placements:\n                new_out_lines.extend(parsed.place_imports[parsed.import_placements[line]])\n                if (\n                    len(formatted_output) <= (index + 1)\n                    or formatted_output[index + 1].strip() != \"\"\n                ):\n                    new_out_lines.append(\"\")\n        formatted_output = new_out_lines\n\n    return _output_as_string(formatted_output, parsed.line_separator)\n\n\n# Ignore DeepSource cyclomatic complexity check for this function.\n# skipcq: PY-R1000\ndef _build_import_group(\n    parsed: parse.ParsedContent,\n    config: Config,\n    section: str,\n    remove_imports: list[str],\n    import_type: str,\n    *,\n    is_lazy: bool,\n) -> list[str]:\n    \"\"\"Build the sorted import lines for one group (eager or lazy) within a section.\"\"\"\n    straight_key: Literal[\"lazy_straight\", \"straight\"] = \"lazy_straight\" if is_lazy else \"straight\"\n    from_key: Literal[\"lazy_from\", \"from\"] = \"lazy_from\" if is_lazy else \"from\"\n\n    straight_modules: Iterable[str] = parsed.imports[section][straight_key]\n    if not config.only_sections:\n        straight_modules = sorting.sort(\n            config,\n            straight_modules,\n            key=lambda key: sorting.module_key(\n                key, config, section_name=section, straight_import=True\n            ),\n            reverse=config.reverse_sort,\n        )\n\n    from_modules: Iterable[str] = parsed.imports[section][from_key]\n    if not config.only_sections:\n        from_modules = sorting.sort(\n            config,\n            from_modules,\n            key=lambda key: sorting.module_key(key, config, section_name=section),\n            reverse=config.reverse_sort,\n        )\n\n        if not is_lazy and config.star_first:\n            star_modules = []\n            other_modules = []\n            for module in from_modules:\n                if \"*\" in parsed.imports[section][\"from\"][module]:\n                    star_modules.append(module)\n                else:\n                    other_modules.append(module)\n            from_modules = star_modules + other_modules\n\n    straight_imports = _with_straight_imports(\n        parsed, config, straight_modules, section, remove_imports, import_type, is_lazy=is_lazy\n    )\n    from_imports = _with_from_imports(\n        parsed, config, from_modules, section, remove_imports, import_type, is_lazy=is_lazy\n    )\n\n    lines_between = [\"\"] * (config.lines_between_types if from_modules and straight_modules else 0)\n    if config.from_first or section == \"FUTURE\":\n        group_output = from_imports + lines_between + straight_imports\n    else:\n        group_output = straight_imports + lines_between + from_imports\n\n    if config.force_sort_within_sections:\n        # collapse comments\n        comments_above: list[str] = []\n        new_group_output: list[str] = []\n        lines_with_comments: dict[str, list[str]] = {}\n        for line in group_output:\n            if not line:\n                continue\n            if line.startswith(\"#\"):\n                comments_above.append(line)\n            elif comments_above:\n                lines_with_comments[line] = comments_above\n                new_group_output.append(line)\n                comments_above = []\n            else:\n                new_group_output.append(line)\n        # only_sections option is not imposed if force_sort_within_sections is True\n        new_group_output = sorting.sort(\n            config,\n            new_group_output,\n            key=lambda line: sorting.section_key(_unwrap_for_sort(line), config=config),\n            reverse=config.reverse_sort,\n        )\n        # uncollapse comments\n        group_output = []\n        for line in new_group_output:\n            line_comments = lines_with_comments.get(line)\n            if line_comments:\n                group_output.extend(line_comments)\n            group_output.append(line)\n\n    return group_output\n\n\ndef _build_as_imports(\n    *,\n    from_import: str,  # Y in `from X import Y as Z`\n    as_imports: list[str],  # `Y as Z` in `from X import Y as Z`\n    import_start: str,  # `from X import ` in `from X import Y as Z`\n    line_separator: str,\n    config: Config,\n    straight_comments: list[str],\n    nested_comments: dict[str, str],\n    # Whether to include the straight import line (e.g. `from X import Y`) in the output. Can be\n    # determined by combining star imports.\n    include_straight_import: bool,\n) -> list[str]:\n    \"\"\"\n    Build the import statements for a given list (`as_imports`) of aliased imports.\n    \"\"\"\n    if not config.only_sections:\n        as_imports = sorting.sort(config, as_imports)\n\n    output: list[str] = []\n\n    if include_straight_import:\n        specific_comment = nested_comments.pop(from_import, None)\n        if specific_comment is not None:\n            straight_comments.append(specific_comment)\n        output.append(\n            wrap.line(\n                with_comments(\n                    straight_comments,\n                    import_start + from_import,\n                    removed=config.ignore_comments,\n                    comment_prefix=config.comment_prefix,\n                ),\n                line_separator,\n                config,\n            )\n        )\n        straight_comments = []\n\n    for as_import in as_imports:\n        # `We snapshot `straight_comments` here so that we can later distinguish\n        # the two types: opening-line comments must stay on the \"import (\" line\n        # when parentheses are used, while attribute-line comments stay on the\n        # import attribute line.\n        opening_line_comments = list(straight_comments)\n        specific_comment = nested_comments.pop(as_import, None)\n        # Collect the attribute-line comment (if any) separately so it can be\n        # embedded in the attribute line regardless of wrapping mode.\n        if specific_comment is not None:\n            straight_comments.append(specific_comment)\n\n        import_line = import_start + as_import\n        if opening_line_comments and config.use_parentheses:\n            # When parentheses are used, opening-line comments (e.g. \"# noqa\") must\n            # remain on the \"from X import (\" line. If we naively embedded them in\n            # the attribute string and then called wrap.line(), the comment would\n            # end up inside the parentheses on the alias attribute line.\n            # Wrap the import with only the attribute-line comment. Afterwards, add\n            # the opening-line comment back to the first line of the wrapped import\n            # statement.\n            lines = wrap.line(\n                with_comments(\n                    [specific_comment] if specific_comment else [],\n                    import_line,\n                    removed=config.ignore_comments,\n                    comment_prefix=config.comment_prefix,\n                ),\n                line_separator,\n                config,\n            ).split(line_separator)\n\n            opening_comment = with_comments(\n                opening_line_comments,\n                \"\",\n                removed=config.ignore_comments,\n                comment_prefix=config.comment_prefix,\n            )\n            if opening_comment:\n                lines[0] += opening_comment\n                if config.multi_line_output == wrap_modes.WrapModes.NOQA:\n                    lines[0] = wrap.line(lines[0], line_separator, config)\n            output.append(line_separator.join(lines))\n        else:\n            output.append(\n                wrap.line(\n                    with_comments(\n                        straight_comments,\n                        import_line,\n                        removed=config.ignore_comments,\n                        comment_prefix=config.comment_prefix,\n                    ),\n                    line_separator,\n                    config,\n                )\n            )\n\n        straight_comments = []\n    return output\n\n\ndef _build_grouped_from_imports(\n    *,\n    imports: list[str],\n    comments: list[str],\n    module: str,\n    import_start: str,\n    processed_as_imports_this_iteration: bool,\n    parsed: parse.ParsedContent,\n    config: Config,\n) -> str:\n    \"\"\"\n    Build a string of imports, wrapping them across multiple lines if necessary.\n    \"\"\"\n    # If there are no imports to output, return an empty string. Make sure to do this after popping\n    # any comments, so that they don't remain.\n    if not imports:\n        return \"\"\n\n    import_statement = with_comments(\n        comments,\n        import_start + (\", \").join(imports),\n        removed=config.ignore_comments,\n        comment_prefix=config.comment_prefix,\n    )\n\n    do_multiline_reformat = False\n\n    if (\n        (config.force_grid_wrap and len(imports) >= config.force_grid_wrap)\n        or (len(import_statement) > config.line_length and len(imports) > 1)\n        or (\n            # If line too long AND have imports AND we are\n            # NOT using GRID or VERTICAL wrap modes\n            len(import_statement) > config.line_length\n            and len(imports) > 0\n            and config.multi_line_output\n            not in (wrap_modes.WrapModes.GRID, wrap_modes.WrapModes.VERTICAL)\n        )\n    ):\n        do_multiline_reformat = True\n\n    if (\n        # When ``include_trailing_comma`` is enabled isort always appends a\n        # trailing comma to multi-line imports.  Combined with\n        # ``split_on_trailing_comma`` that means any import wrapped across\n        # multiple lines would gain a trailing comma and therefore be exploded\n        # onto individual lines on the *next* run.  Treat such imports as if they\n        # already carried a trailing comma so the explode happens on the first\n        # pass too, keeping the output idempotent regardless of the requested\n        # ``multi_line_output`` mode.\n        config.split_on_trailing_comma\n        and (\n            module in parsed.trailing_commas\n            or (config.include_trailing_comma and do_multiline_reformat)\n        )\n        and not processed_as_imports_this_iteration\n    ):\n        return wrap.import_statement(\n            import_start=import_start,\n            from_imports=imports,\n            comments=comments,\n            line_separator=parsed.line_separator,\n            config=config,\n            explode=True,\n        )\n\n    if do_multiline_reformat:\n        import_statement = wrap.import_statement(\n            import_start=import_start,\n            from_imports=imports,\n            comments=comments,\n            line_separator=parsed.line_separator,\n            config=config,\n        )\n        if config.multi_line_output == wrap_modes.WrapModes.GRID:\n            other_import_statement = wrap.import_statement(\n                import_start=import_start,\n                from_imports=imports,\n                comments=comments,\n                line_separator=parsed.line_separator,\n                config=config,\n                multi_line_output=wrap_modes.WrapModes.VERTICAL_GRID,\n            )\n            if (\n                max(\n                    len(import_line)\n                    for import_line in import_statement.split(parsed.line_separator)\n                )\n                > config.line_length\n            ):\n                import_statement = other_import_statement\n        return import_statement\n\n    if len(import_statement) > config.line_length:\n        return wrap.line(import_statement, parsed.line_separator, config)\n\n    return import_statement\n\n\ndef _with_from_imports(\n    parsed: parse.ParsedContent,\n    config: Config,\n    from_modules: Iterable[str],\n    section: str,\n    remove_imports: list[str],\n    import_type: str,\n    *,\n    is_lazy: bool,\n) -> list[str]:\n    output: list[str] = []\n    import_key: Literal[\"lazy_from\", \"from\"] = \"lazy_from\" if is_lazy else \"from\"\n\n    for module in from_modules:\n        module_output = _with_from_imports_for_module(\n            module=module,\n            parsed=parsed,\n            config=config,\n            section=section,\n            remove_imports=remove_imports,\n            import_type=import_type,\n            import_key=import_key,\n        )\n        if module_output is not None:\n            output.extend(module_output)\n\n    return output\n\n\n# Ignore DeepSource cyclomatic complexity check for this function. It was\n# already complex when this check was enabled.\n# skipcq: PY-R1000\ndef _with_from_imports_for_module(\n    *,\n    module: str,\n    parsed: parse.ParsedContent,\n    config: Config,\n    section: str,\n    remove_imports: list[str],\n    import_type: str,\n    import_key: Literal[\"lazy_from\", \"from\"],\n) -> list[str]:\n    \"\"\"\n    Build the from-import lines for a given module and section.\n    \"\"\"\n    output: list[str] = []\n    if module in remove_imports:\n        return output\n\n    import_start = f\"from {module} {import_type} \"\n    if import_key == \"lazy_from\":\n        import_start = f\"lazy {import_start}\"\n    from_imports = list(parsed.imports[section][import_key][module])\n\n    if (\n        not config.no_inline_sort\n        or (config.force_single_line and module not in config.single_line_exclusions)\n    ) and not config.only_sections:\n        from_imports = sorting.sort(\n            config,\n            from_imports,\n            key=lambda key: sorting.module_key(\n                key,\n                config,\n                True,\n                config.force_alphabetical_sort_within_sections,\n                section_name=section,\n            ),\n            reverse=config.reverse_sort,\n        )\n    if remove_imports:\n        from_imports = [line for line in from_imports if f\"{module}.{line}\" not in remove_imports]\n\n    sub_modules = [f\"{module}.{from_import}\" for from_import in from_imports]\n    as_imports = {\n        from_import: [\n            f\"{from_import} as {as_module}\" for as_module in parsed.as_map[\"from\"][sub_module]\n        ]\n        for from_import, sub_module in zip(from_imports, sub_modules, strict=False)\n        if sub_module in parsed.as_map[\"from\"]\n    }\n    if config.combine_as_imports and not (\"*\" in from_imports and config.combine_star):\n        if not config.no_inline_sort:\n            for as_import in as_imports:\n                if not config.only_sections:\n                    as_imports[as_import] = sorting.sort(config, as_imports[as_import])\n        for from_import in copy.copy(from_imports):\n            if from_import in as_imports:\n                idx = from_imports.index(from_import)\n                if parsed.imports[section][import_key][module][from_import]:\n                    from_imports[(idx + 1) : (idx + 1)] = as_imports.pop(from_import)\n                else:\n                    from_imports[idx : (idx + 1)] = as_imports.pop(from_import)\n\n    comments: list[str] = parsed.categorized_comments[\"from\"].pop(module, [])\n    above_comments = parsed.categorized_comments[\"above\"][\"from\"].pop(module, None)\n    if above_comments:\n        output.extend(above_comments)\n\n    only_show_as_imports = False\n    if \"*\" in from_imports:\n        from_imports.remove(\"*\")\n\n        output.append(\n            wrap.line(\n                with_comments(\n                    _with_star_comments(\n                        parsed,\n                        module,\n                        # If we are combining the star imports we want to include all from-import\n                        # comments we found above.\n                        comments if config.combine_star else [],\n                    ),\n                    f\"{import_start}*\",\n                    removed=config.ignore_comments,\n                    comment_prefix=config.comment_prefix,\n                ),\n                parsed.line_separator,\n                config,\n            )\n        )\n\n        if config.combine_star:\n            from_imports = [\n                from_import for from_import in from_imports if from_import in as_imports\n            ]\n            only_show_as_imports = True\n\n    # Handle force_single_line\n    if config.force_single_line and module not in config.single_line_exclusions:\n        for from_import in from_imports:\n            if from_import in as_imports:\n                output.extend(\n                    _build_as_imports(\n                        from_import=from_import,\n                        as_imports=as_imports[from_import],\n                        import_start=import_start,\n                        line_separator=parsed.line_separator,\n                        config=config,\n                        straight_comments=[\n                            *comments,\n                            *parsed.categorized_comments[\"straight\"].get(\n                                f\"{module}.{from_import}\", []\n                            ),\n                        ],\n                        nested_comments=parsed.categorized_comments[\"nested\"].get(module, {}),\n                        include_straight_import=(\n                            parsed.imports[section][import_key][module][from_import]\n                            and not only_show_as_imports\n                        ),\n                    )\n                )\n            else:\n                single_import_line = with_comments(\n                    [\n                        c\n                        for c in (\n                            *comments,\n                            parsed.categorized_comments[\"nested\"]\n                            .get(module, {})\n                            .pop(from_import, None),\n                        )\n                        if c is not None\n                    ],\n                    import_start + from_import,\n                    removed=config.ignore_comments,\n                    comment_prefix=config.comment_prefix,\n                )\n\n                output.append(wrap.line(single_import_line, parsed.line_separator, config))\n            comments = []\n        return output\n\n    while from_imports:\n        # Tracks whether any aliased imports were emitted before the grouped\n        # non-aliased imports in this pass of the outer loop.  When True it\n        # suppresses the split_on_trailing_comma explode behaviour for the\n        # non-aliased group, because those imports are not the sole content\n        # of the statement and forcing them onto individual lines would break\n        # the intended output structure.\n        processed_as_imports_this_iteration = False\n        while from_imports and from_imports[0] in as_imports:\n            processed_as_imports_this_iteration = True\n            from_import = from_imports.pop(0)\n\n            output.extend(\n                _build_as_imports(\n                    from_import=from_import,\n                    as_imports=as_imports[from_import],\n                    import_start=import_start,\n                    line_separator=parsed.line_separator,\n                    config=config,\n                    # `from_comments` at this point contains any comments that appeared on\n                    # the *opening* \"from X import\" line. These are distinct from\n                    # `nested_comments`, which is an inline comment on the attribute line\n                    # itself.\n                    straight_comments=parsed.categorized_comments[\"straight\"].get(\n                        f\"{module}.{from_import}\", []\n                    ),\n                    nested_comments=parsed.categorized_comments[\"nested\"].get(module, {}),\n                    include_straight_import=(\n                        parsed.imports[section][import_key][module][from_import]\n                        and not only_show_as_imports\n                    ),\n                )\n            )\n\n        for from_import in copy.copy(from_imports):\n            comment = parsed.categorized_comments[\"nested\"].get(module, {}).pop(from_import, None)\n            if (\n                comment is not None\n                and from_import in as_imports\n                and config.multi_line_output != wrap_modes.WrapModes.NOQA\n            ):\n                # This name also has an alias; the leading-alias loop keeps the two\n                # together on a later pass.  Popping the comment here would drop the\n                # alias, so put it back and leave the name for that loop.\n                parsed.categorized_comments[\"nested\"].setdefault(module, {})[from_import] = comment\n                continue\n            if comment is not None:\n                # If the comment is a noqa and hanging indent wrapping is used,\n                # keep the name in the main list and hoist the comment to the statement.\n                if (\n                    comment.lower().startswith(\"noqa\")\n                    and config.multi_line_output == wrap_modes.WrapModes.HANGING_INDENT\n                ):\n                    comments = list(comments) if comments else []\n                    comments.append(comment)\n                    continue\n\n                from_imports.remove(from_import)\n                if from_imports:\n                    use_comments: list[str] | None = []\n                else:\n                    use_comments = comments\n                    comments = []\n                single_import_line = with_comments(\n                    use_comments,\n                    import_start + from_import,\n                    removed=config.ignore_comments,\n                    comment_prefix=config.comment_prefix,\n                )\n                comment_text = f\" {comment}\" if comment else \"\"\n                single_import_line += (\n                    f\"{(use_comments and ';') or config.comment_prefix}{comment_text}\"\n                )\n                output.append(wrap.line(single_import_line, parsed.line_separator, config))\n\n        from_import_section = []\n        while from_imports and (\n            from_imports[0] not in as_imports\n            or (\n                config.combine_as_imports\n                and parsed.imports[section][import_key][module][from_import]\n            )\n        ):\n            from_import_section.append(from_imports.pop(0))\n\n        # If we are combining aliased imports we need to pop any associated comments.\n        if config.combine_as_imports:\n            comments = [\n                *comments,\n                *(parsed.categorized_comments[\"from\"].pop(f\"{module}.__combined_as__\", ())),\n            ]\n\n        grouped_from_import_statement = _build_grouped_from_imports(\n            config=config,\n            parsed=parsed,\n            module=module,\n            imports=from_import_section,\n            import_start=import_start,\n            comments=comments,\n            processed_as_imports_this_iteration=processed_as_imports_this_iteration,\n        )\n        if grouped_from_import_statement:\n            output.append(grouped_from_import_statement)\n\n        # Reset comments as we have just parsed them.\n        comments = []\n\n    return output\n\n\n# Ignore DeepSource cyclomatic complexity check for this function.\n# skipcq: PY-R1000\ndef _with_straight_imports(\n    parsed: parse.ParsedContent,\n    config: Config,\n    straight_modules: Iterable[str],\n    section: str,\n    remove_imports: list[str],\n    import_type: str,\n    *,\n    is_lazy: bool,\n) -> list[str]:\n    output: list[str] = []\n\n    import_type = f\"lazy {import_type}\" if is_lazy else import_type\n\n    as_imports = any(module in parsed.as_map[\"straight\"] for module in straight_modules)\n\n    # combine_straight_imports only works for bare imports, 'as' imports not included\n    if config.combine_straight_imports and not as_imports:\n        if not straight_modules:\n            return []\n\n        above_comments: list[str] = []\n        inline_comments: list[str] = []\n\n        for module in straight_modules:\n            if module in parsed.categorized_comments[\"above\"][\"straight\"]:\n                above_comments.extend(parsed.categorized_comments[\"above\"][\"straight\"].pop(module))\n            if module in parsed.categorized_comments[\"straight\"]:\n                inline_comments.extend(parsed.categorized_comments[\"straight\"][module])\n\n        combined_straight_imports = \", \".join(straight_modules)\n\n        output.extend(above_comments)\n\n        if inline_comments:\n            combined_inline_comments = \" \".join(c for c in inline_comments if c)\n            if combined_inline_comments:\n                line_content = (\n                    f\"{import_type} {combined_straight_imports}  # {combined_inline_comments}\"\n                )\n            else:\n                line_content = f\"{import_type} {combined_straight_imports}  #\"\n        else:\n            line_content = f\"{import_type} {combined_straight_imports}\"\n\n        if config.multi_line_output == wrap_modes.WrapModes.NOQA:\n            line_content = wrap.line(line_content, parsed.line_separator, config)\n        output.append(line_content)\n\n        return output\n\n    for module in straight_modules:\n        if module in remove_imports:\n            continue\n\n        import_definition = []\n        if module in parsed.as_map[\"straight\"]:\n            if parsed.imports[section][\"lazy_straight\" if is_lazy else \"straight\"][module]:\n                import_definition.append((f\"{import_type} {module}\", module))\n            import_definition.extend(\n                (f\"{import_type} {module} as {as_import}\", f\"{module} as {as_import}\")\n                for as_import in parsed.as_map[\"straight\"][module]\n            )\n        else:\n            import_definition.append((f\"{import_type} {module}\", module))\n\n        comments_above = parsed.categorized_comments[\"above\"][\"straight\"].pop(module, None)\n        if comments_above:\n            output.extend(comments_above)\n        for idef, imodule in import_definition:\n            line_content = with_comments(\n                parsed.categorized_comments[\"straight\"].get(imodule),\n                idef,\n                removed=config.ignore_comments,\n                comment_prefix=config.comment_prefix,\n            )\n            if config.multi_line_output == wrap_modes.WrapModes.NOQA:\n                line_content = wrap.line(line_content, parsed.line_separator, config)\n            output.append(line_content)\n\n    return output\n\n\ndef _output_as_string(lines: list[str], line_separator: str) -> str:\n    return line_separator.join(_normalize_empty_lines(lines))\n\n\ndef _normalize_empty_lines(lines: list[str]) -> list[str]:\n    while lines and lines[-1].strip() == \"\":\n        lines.pop(-1)\n\n    lines.append(\"\")\n    return lines\n\n\ndef _ensure_newline_before_comment(output: list[str]) -> list[str]:\n    new_output: list[str] = []\n\n    def is_comment(line: str | None) -> bool:\n        return line.startswith(\"#\") if line else False\n\n    for line, prev_line in zip(output, [None, *output], strict=False):\n        if is_comment(line) and prev_line != \"\" and not is_comment(prev_line):\n            new_output.append(\"\")\n        new_output.append(line)\n    return new_output\n\n\ndef _with_star_comments(parsed: parse.ParsedContent, module: str, comments: list[str]) -> list[str]:\n    star_comment = parsed.categorized_comments[\"nested\"].get(module, {}).pop(\"*\", None)\n    if star_comment:\n        return [*comments, star_comment]\n    return comments\n\n\ndef _separate_packages(section_output: list[str], config: Config) -> list[str]:\n    group_keys: set[str] = set()\n    comments_above: list[str] = []\n    processed_section_output: list[str] = []\n\n    for section_line in section_output:\n        if section_line.startswith(\"#\"):\n            comments_above.append(section_line)\n            continue\n\n        package_name: str = section_line.split(\" \")[1]\n        _, reason = module_with_reason(package_name, config)\n\n        if \"Matched configured known pattern\" in reason:\n            package_depth = len(reason.split(\".\")) - 1  # minus 1 for re.compile\n            key = \".\".join(package_name.split(\".\")[: package_depth + 1])\n        else:\n            key = package_name.split(\".\", maxsplit=1)[0]\n\n        if key not in group_keys:\n            if group_keys:\n                processed_section_output.append(\"\")\n\n            group_keys.add(key)\n\n        if comments_above:\n            processed_section_output.extend(comments_above)\n            comments_above = []\n\n        processed_section_output.append(section_line)\n\n    return processed_section_output\n"
+     }
+    }
+   ],
+   "llm_call_count": 0
+  },
+  {
+   "step_id": 4,
+   "timestamp": "2026-11-07T18:43:44.185Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_2",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_2",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 4,
+  "extra": {
+   "repogym": {
+    "reward": 1,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 1,
+     "fail_to_pass_passed": 1,
+     "fail_to_pass_total": 1,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 122,
+     "fail_to_pass_failed": [],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 15,
+     "error": "",
+     "peak_memory_bytes": 70746112,
+     "seconds": 5.9
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "PyCQA__isort-2724",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "ed4a74da6dddc770",
+   "image_digest": "sha256:35a2484b9aff69959407f3d21388bad41f5f463ef07d223eb533271a7b6c30e9",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

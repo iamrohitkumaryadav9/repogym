@@ -1,0 +1,250 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-all-null",
+ "trajectory_id": "6d5a2269f53427c5",
+ "agent": {
+  "name": "repogym-null",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-08T03:35:57.478Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-08T03:35:57.478Z",
+   "source": "user",
+   "message": "# NOQA mode adds another `# NOQA` marker on every run, so the output never converges\n\nNOQA mode adds another `# NOQA` marker on every run, so the output never converges\n\nWith `multi_line_output=7` (NOQA) and `use_parentheses=True`, an import that carries an opening-line comment gets a new `# NOQA` marker appended on every run:\n\n```python\n>>> import isort\n>>> src = (\"from my_package.my_module import super_long_file_name as super_long_alias\"\n...        \"  # type: ignore\\n\")\n>>> opts = dict(multi_line_output=7, use_parentheses=True, line_length=40)\n>>> isort.code(src, **opts)\n'from my_package.my_module import super_long_file_name as super_long_alias  # NOQA  # type: ignore\\n'\n>>> isort.code(isort.code(src, **opts), **opts)\n'from my_package.my_module import super_long_file_name as super_long_alias  # NOQA  # NOQA  # type: ignore\\n'\n```\n\nEach pass reads the previous markers back as one comment and appends another, so the statement never settles and `isort --check` keeps failing on the file it just wrote. The non-parenthesised path (`use_parentheses=False`) is already stable, and output that ends with the marker instead of `# type: ignore` is also what that path produces.\n\nCause: in `isort/output.py::_build_as_imports` the statement is wrapped by `wrap.line()` first and the opening-line comment is attached afterwards; NOQA mode never wraps in parentheses, so there is no opening parenthesis to attach the comment to, and the comment lands behind the marker. A fix that merges the comments before wrapping and keeps the output a fixpoint is ready; I will open a pull request for it. This issue is to claim the behaviour before anyone else starts on it."
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-08T03:35:57.478Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 3,
+  "extra": {
+   "repogym": {
+    "reward": 0,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 0,
+     "fail_to_pass_passed": 0,
+     "fail_to_pass_total": 2,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 138,
+     "fail_to_pass_failed": [
+      "tests.unit.test_regressions::test_noqa_added_to_long_as_import_with_opening_line_comment_issue_2093",
+      "tests.unit.test_regressions::test_noqa_mode_reaches_a_fixpoint_with_an_opening_line_comment"
+     ],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 0,
+     "error": "",
+     "peak_memory_bytes": 90976256,
+     "seconds": 7.1
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "PyCQA__isort-2750",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "6d5a2269f53427c5",
+   "image_digest": "sha256:35a2484b9aff69959407f3d21388bad41f5f463ef07d223eb533271a7b6c30e9",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}

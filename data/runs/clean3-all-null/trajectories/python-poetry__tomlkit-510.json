@@ -1,0 +1,255 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "clean3-all-null",
+ "trajectory_id": "9bf2a4a7f730e48c",
+ "agent": {
+  "name": "repogym-null",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-08T03:18:43.989Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-08T03:18:43.989Z",
+   "source": "user",
+   "message": "# Security: Uncontrolled Recursion DoS in parser.py (CWE-674)\n\n## Security Vulnerability: Uncontrolled Recursion DoS\n\n**CWE**: [CWE-674: Uncontrolled Recursion](https://cwe.mitre.org/data/definitions/674.html)\n**Severity**: MEDIUM (CVSS 5.3 — AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L)\n**90-day disclosure deadline**: 2026-06-06\n\n### Summary\n\nThe recursive call chains in `tomlkit/parser.py` have no depth limit. A crafted TOML input with deeply nested arrays or inline tables triggers a `RecursionError`, crashing the Python process.\n\n### Affected Code\n\n- **File**: `tomlkit/parser.py`\n- **Lines**: 434-435, 589, 621-650\n- **Call chains**:\n  - `_parse_value` → `_parse_array` → `_parse_value` (nested arrays)\n  - `_parse_value` → `_parse_inline_table` → `_parse_key_value` → `_parse_value` (nested inline tables)\n\n### Proof of Concept\n\n```python\nimport tomlkit\n\n# Deeply nested arrays — crashes with RecursionError\npayload = 'x = ' + '[' * 500 + '1' + ']' * 500\ntomlkit.parse(payload)  # RecursionError\n\n# Deeply nested inline tables\npayload2 = 'x = ' + '{a = ' * 200 + '1' + '}' * 200\ntomlkit.parse(payload2)  # RecursionError\n```\n\n### Impact\n\nDenial of service against any application that parses user-supplied TOML using tomlkit. This includes:\n- Web services accepting TOML configuration via API\n- CI/CD systems parsing `pyproject.toml` from untrusted sources\n- Any service where users can upload or submit TOML content\n\nThe `RecursionError` kills the current thread/request handler. Depending on the server architecture, this could crash the entire process.\n\n### Suggested Fix\n\nAdd a recursion depth counter with a configurable maximum (e.g., 100). When the limit is exceeded, raise `tomlkit.exceptions.ParseError` instead of allowing the unbounded recursion. Example approach:\n\n```python\n# In Parser.__init__:\nself._recursion_depth = 0\nself._max_recursion_depth = max_recursion_depth  # default 100\n\n# In _parse_value, _parse_array, _parse_inline_table:\nself._recursion_depth += 1\nif self._recursion_depth > self._max_recursion_depth:\n    raise self.parse_error(ParseError, \"Maximum nesting depth exceeded\")\ntry:\n    # ... existing parsing logic ...\nfinally:\n    self._recursion_depth -= 1\n```\n\n### Reporter\n\nConner Webber (conner.webber000@gmail.com)\n\n---\n\n*Note: Private vulnerability reporting is not enabled on this repository and no SECURITY.md was found, so this is filed as a public issue. I attempted PVRA first. If maintainers would prefer private coordination, please reach out to the email above.*"
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-08T03:18:43.989Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 3,
+  "extra": {
+   "repogym": {
+    "reward": 0,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 0,
+     "fail_to_pass_passed": 0,
+     "fail_to_pass_total": 7,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 139,
+     "fail_to_pass_failed": [
+      "tests.test_api::test_parse_accepts_nesting_at_the_depth_limit",
+      "tests.test_api::test_parse_rejects_deeply_nested_documents[payload0]",
+      "tests.test_api::test_parse_rejects_deeply_nested_documents[payload1]",
+      "tests.test_api::test_parse_rejects_deeply_nested_documents[payload2]",
+      "tests.test_api::test_parse_rejects_deeply_nested_documents[payload3]",
+      "tests.test_api::test_parse_rejects_deeply_nested_documents[payload4]",
+      "tests.test_api::test_parse_rejects_deeply_nested_documents[payload5]"
+     ],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 0,
+     "error": "",
+     "peak_memory_bytes": 75821056,
+     "seconds": 4.6
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted"
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "python-poetry__tomlkit-510",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "9bf2a4a7f730e48c",
+   "image_digest": "sha256:c4632c7bae6dfd77076b4706a78ca49a888242e76994338be39f25f98016923d",
+   "repogym_commit": "ac4a173e065a7457aeb64d403667675fb01d224e",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "seed": null
+  }
+ }
+}
