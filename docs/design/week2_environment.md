@@ -535,3 +535,15 @@ showed the following:
 A live episode through the adapter on `tomlkit-537`, applying the gold patch through
 `CallToolAction`, got reward 1. Unit tests (`tests/test_openenv_adapter.py`) cover the contract
 with a fake runner.
+
+## 16. Week 3 input: context growth drives rate limits and cost (2026-11-08)
+
+The baseline keeps a linear history, so every turn re-sends the whole conversation. Late in an
+episode, each call sends **about 10–15k prompt tokens**, and a 100-step episode used about 1.2M
+prompt tokens. That's what triggered the free tier's per-minute limits: at one request per
+6 s, tomlkit-537 got 28 HTTP 429s between steps 60 and 83. It's also what would drive cost on a
+paid tier. Mitigations so far are a throttle of one request per 12 s, and honouring the
+server's `retryDelay`; a delay longer than 120 s, such as a daily quota, fails at once instead.
+**Planned for Week 3:** context management (truncating or summarising old observations,
+recorded as ATIF `context_management` steps) and prompt caching, with cached tokens reported in
+`metrics.cached_tokens`.
