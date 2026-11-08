@@ -13,6 +13,7 @@ data/maintenance/
 # Episode runs: only the clean evidence runs behind the README tables are committed.
 data/runs/*
 !data/runs/clean3-*/
+!data/runs/clean4-*/
 !data/runs/smoke-baseline/
 data/runs/clean3-all-oracle/trajectories/
 data/runs/clean3-all-oracle/diffs/
