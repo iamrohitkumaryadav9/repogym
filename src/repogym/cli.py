@@ -428,6 +428,9 @@ def run(
     workers: Annotated[int, typer.Option(help="Parallel episodes.")] = 2,
     run_id: Annotated[str | None, typer.Option(help="Resume or name a run.")] = None,
     release: Annotated[str, typer.Option(help="Release version.")] = "v0.1",
+    api_tier: Annotated[
+        str | None, typer.Option(help="LLM account tier to record in provenance (free | paid).")
+    ] = None,
 ) -> None:
     """Run an agent on a split; writes data/runs/<run_id>/ (episodes.jsonl + ATIF trajectories)."""
     from datetime import UTC, datetime
@@ -466,6 +469,7 @@ def run(
         workers=workers,
         is_oracle=agent == "oracle",
         on_done=show,
+        api_tier=api_tier,
     )
     if agent in ("oracle", "null", "cheater"):
         from repogym.expectations import summarise

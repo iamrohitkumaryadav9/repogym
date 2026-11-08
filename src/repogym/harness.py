@@ -75,6 +75,10 @@ class EpisodeRecord(BaseModel):
     history_overlap: dict | None = None
     history_recoverable: bool | None = None
     past_gold_lines_observed: list[str] = Field(default_factory=list)  # informational (D6)
+    # LLM provider account: declared by the operator (e.g. "free"), plus any quota ids the
+    # provider named in 429 responses (e.g. "...-FreeTier"), which identify the tier.
+    api_tier: str | None = None
+    quota_ids_seen: list[str] = Field(default_factory=list)
     disk_written_mb: float | None = None  # writable layer at the end (setup included)
     peak_disk_mb: float | None = None
 
@@ -114,6 +118,7 @@ def run_episode(
     seed: int | None = None,
     is_oracle: bool = False,
     grader: Callable = grade,
+    api_tier: str | None = None,
 ) -> EpisodeRecord:
     manifest = json.loads((RELEASE_DIR / release / "manifest.json").read_text())
     commit, dirty = repogym_commit()
@@ -135,6 +140,7 @@ def run_episode(
         repogym_dirty=dirty,
         budgets=budgets,
         seed=seed,
+        api_tier=api_tier,
     )
     if record.image_digest != manifest["docker_images"].get(env.spec.image):
         record.error = "image digest differs from the release manifest"
@@ -159,6 +165,7 @@ def run_episode(
         state = env.state()
         record.done_reason = state.done_reason or ("agent_error" if record.error else None)
         record.steps = state.step_count
+        record.quota_ids_seen = sorted(getattr(agent, "quota_ids_seen", None) or [])
         record.disk_written_mb, record.peak_disk_mb = state.disk_mb, state.peak_disk_mb
         try:
             work = env.collect()
@@ -216,6 +223,8 @@ def run_episode(
                 "image_digest": record.image_digest,
                 "repogym_commit": commit,
                 "budgets": budgets.model_dump(),
+                "api_tier": api_tier,
+                "quota_ids_seen": record.quota_ids_seen,
                 "seed": seed,
             }
         },
@@ -270,6 +279,7 @@ def run_many(
     workers: int = 2,
     is_oracle: bool = False,
     on_done: Callable[[EpisodeRecord], None] | None = None,
+    api_tier: str | None = None,
 ) -> list[EpisodeRecord]:
     done_ids = set()
     if (run_dir / "episodes.jsonl").exists():
@@ -282,7 +292,9 @@ def run_many(
     repogym_commit()  # pin provenance to the code this process started with
 
     def one(task: ReleaseTask) -> EpisodeRecord:
-        record = run_episode(task, make_agent(task), run_dir, budgets, is_oracle=is_oracle)
+        record = run_episode(
+            task, make_agent(task), run_dir, budgets, is_oracle=is_oracle, api_tier=api_tier
+        )
         if on_done:
             on_done(record)
         return record
