@@ -208,3 +208,75 @@ def test_openai_compat_settings_come_from_env(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ModelUnavailable, match="OPENAI_COMPAT_API_KEY"):
         OpenAICompatChat.from_env()
+
+
+def rate_limited(delay, quota_id="GenerateRequestsPerMinutePerProjectPerModel-FreeTier"):
+    body = {
+        "error": {
+            "code": 429,
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                    "violations": [{"quotaId": quota_id}],
+                },
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay},
+            ],
+        }
+    }
+    return httpx.Response(429, json=body)
+
+
+def test_retry_delay_from_a_429_is_honoured():
+    sleeps = []
+    client, calls = chat_client({"primary-m": [rate_limited("37s"), gemini("ok")]}, sleeps)
+    assert GeminiChat(client).chat("s", [("user", "u")]).text == "ok"
+    assert len(sleeps) == 1 and sleeps[0] >= 37  # not the 1-3 s jittered backoff
+    assert client.quota_ids_seen == {"GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}
+
+
+def test_backoff_is_kept_when_it_is_longer_than_the_retry_delay():
+    sleeps = []
+    client, _ = chat_client(
+        {
+            "primary-m": [
+                gemini("", 503),
+                gemini("", 503),
+                gemini("", 503),
+                rate_limited("0.5s"),
+                gemini("ok"),
+            ]
+        },
+        sleeps,
+    )
+    GeminiChat(client).chat("s", [("user", "u")])
+    assert sleeps[3] >= 0.5 * 16 * 0.5  # fourth wait: jittered 16 s backoff, not 0.5 s
+
+
+def test_daily_quota_delay_stops_at_once_without_looping():
+    sleeps = []
+    client, calls = chat_client(
+        {
+            "primary-m": [
+                rate_limited("12193s", "GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+            ]
+            * 5,
+            "fallback-m": [rate_limited("12193s")] * 5,
+        },
+        sleeps,
+    )
+    with pytest.raises(ModelUnavailable, match="quota exhausted"):
+        GeminiChat(client).chat("s", [("user", "u")])
+    assert sleeps == [] and len(calls) == 2  # one try per model, no sleeping for hours
+    assert any("PerDay" in q for q in client.quota_ids_seen)
+
+
+def test_baseline_default_throttle_is_12_seconds():
+    import inspect
+
+    from repogym.agents.baseline import make_baseline
+    from repogym.agents.models import DEFAULT_INTERVAL_SECONDS, from_config
+
+    assert DEFAULT_INTERVAL_SECONDS == 12.0
+    assert inspect.signature(make_baseline).parameters["interval"].default == 12.0
+    assert inspect.signature(from_config).parameters["interval"].default == 12.0

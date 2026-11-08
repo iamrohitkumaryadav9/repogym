@@ -26,6 +26,9 @@ log = structlog.get_logger()
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
 RETRY_STATUSES = {429, 500, 503}
+# A 429 may say how long to wait (RetryInfo.retryDelay). Per-minute limits ask for seconds, and
+# are honoured. A daily quota asks for hours: the request fails at once instead.
+MAX_HONOURED_RETRY_SECONDS = 120.0
 MAX_ATTEMPTS = 5
 BASE_DELAY_SECONDS = 2.0
 DEFAULT_INTERVAL_SECONDS = 5.0
@@ -146,6 +149,7 @@ class GeminiClient:
         self._transport = transport or self._post
         self._chat_transport: Callable[[str, dict], httpx.Response] | None = None
         self.requests = 0
+        self.quota_ids_seen: set[str] = set()  # from 429 bodies, e.g. "...-FreeTier"
 
     def close(self) -> None:
         if self._http is not None:
@@ -196,6 +200,7 @@ class GeminiClient:
         for attempt in range(MAX_ATTEMPTS):
             self._throttle.wait()
             self.requests += 1
+            retry_after = None
             try:
                 response = send()
             except httpx.TransportError as exc:
@@ -207,8 +212,18 @@ class GeminiClient:
                 if status not in RETRY_STATUSES:
                     # Report the status only: error bodies can echo request details.
                     raise LLMRequestError(f"{model} returned HTTP {status}")
+                retry_after, quota_ids = _retry_info(response)
+                self.quota_ids_seen.update(quota_ids)
+                if retry_after is not None and retry_after > MAX_HONOURED_RETRY_SECONDS:
+                    # e.g. a daily quota: waiting hours (or retrying) can't help; stop now.
+                    raise LLMUnavailable(
+                        f"{model}: quota exhausted, server asks to retry "
+                        f"after {retry_after:.0f}s ({', '.join(quota_ids)})"
+                    )
             if attempt < MAX_ATTEMPTS - 1:
                 wait = jittered(delays[attempt], self._rng)
+                if retry_after is not None:
+                    wait = max(wait, retry_after)  # never retry sooner than the server asks
                 log.warning("llm_retry", model=model, status=status or reason, sleep=round(wait, 1))
                 self._sleep(wait)
         raise LLMUnavailable(f"{model}: {MAX_ATTEMPTS} attempts failed")
@@ -322,6 +337,33 @@ class GeminiClient:
         problems += [CacheProblem(p, None, "leftover temp file")
                      for p in self._cache_dir.rglob("*.tmp")]  # fmt: skip
         return len(paths), problems
+
+
+def _retry_info(response: httpx.Response) -> tuple[float | None, list[str]]:
+    """The server's RetryInfo.retryDelay (seconds) and QuotaFailure quota ids, if present.
+
+    Gemini's 429 body carries ``error.details`` entries such as
+    ``{"@type": ".../google.rpc.RetryInfo", "retryDelay": "12s"}`` and
+    ``{"@type": ".../google.rpc.QuotaFailure", "violations": [{"quotaId": "..."}]}``.
+    Only these fields are read; the rest of the body is never logged."""
+    try:
+        details = response.json().get("error", {}).get("details", []) or []
+    except (ValueError, AttributeError):
+        return None, []
+    delay, quota_ids = None, []
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        raw = detail.get("retryDelay")
+        if isinstance(raw, str) and raw.endswith("s"):
+            try:
+                delay = float(raw[:-1])
+            except ValueError:
+                pass
+        for violation in detail.get("violations") or []:
+            if isinstance(violation, dict) and violation.get("quotaId"):
+                quota_ids.append(str(violation["quotaId"]))
+    return delay, quota_ids
 
 
 def _extract_text(response: httpx.Response) -> tuple[str, str]:

@@ -10,7 +10,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from repogym.agents.models import ChatModel, ModelResponseError, ModelUnavailable, from_config
+from repogym.agents.models import (
+    DEFAULT_INTERVAL_SECONDS,
+    ChatModel,
+    ModelResponseError,
+    ModelUnavailable,
+    from_config,
+)
 from repogym.env.environment import Action, Environment, Observation
 
 SENTINEL = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
@@ -64,6 +70,12 @@ class BaselineAgent:
     def model_name(self) -> str:
         return self.model.name
 
+    @property
+    def quota_ids_seen(self) -> set[str]:
+        """Quota ids the provider named in 429s (they identify the account tier)."""
+        client = getattr(self.model, "client", None)
+        return set(getattr(client, "quota_ids_seen", set()))
+
     def run(self, env: Environment, first: Observation) -> None:
         turns: list[tuple[str, str]] = [("user", first.text)]
         while True:
@@ -107,7 +119,7 @@ class BaselineAgent:
             turns += [("assistant", reply.text), ("user", render(observation))]
 
 
-def make_baseline(provider: str = "gemini", interval: float = 6.0):
+def make_baseline(provider: str = "gemini", interval: float = DEFAULT_INTERVAL_SECONDS):
     model = from_config(provider, interval)
 
     def factory(task):

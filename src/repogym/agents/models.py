@@ -202,7 +202,12 @@ class OpenAICompatChat:
         )
 
 
-def from_config(provider: str = "gemini", interval: float = 6.0) -> ChatModel:
+# One request per 12 s keeps long episodes (each turn re-sends the whole history, ~10-15k prompt
+# tokens late on) under the free tier's per-minute limits; 6 s hit 429s mid-episode.
+DEFAULT_INTERVAL_SECONDS = 12.0
+
+
+def from_config(provider: str = "gemini", interval: float = DEFAULT_INTERVAL_SECONDS) -> ChatModel:
     """The configured chat model. Keys come from .env and are never printed."""
     if provider == "gemini":
         return GeminiChat(GeminiClient(Settings.from_env(), interval=interval))
