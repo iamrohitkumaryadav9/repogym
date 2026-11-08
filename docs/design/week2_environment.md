@@ -480,3 +480,44 @@ tasks, `tests/test_mypy.yml` was handed to pytest, the run aborted with a usage 
 and the Oracle scored 0. Six more tasks ran extra helper or data `.py` files that validation
 never ran. Grading now uses validation's own selection (`runnable_test_files`), and a
 regression test covers it. All evidence runs were restarted from scratch after the fix.
+
+## 15. OpenEnv compatibility: a thin adapter (2026-11-08)
+
+**Decision: a thin adapter, `repogym.openenv_adapter.RepoGymOpenEnv`, with no dependency on
+OpenEnv.** The contract is small and well defined, so an adapter was simple. Depending on
+`openenv-core` wasn't: its base install (0.3.0) pulls in gradio, fastmcp 3, huggingface_hub,
+openai, FastAPI and uvicorn, about 100 packages in all. The adapter's pydantic models mirror
+openenv-core 0.3.0 field for field, and they're checked against OpenEnv's own models (see below).
+
+| OpenEnv 0.3.0 | RepoGym adapter | Underlying RepoGym call |
+|---|---|---|
+| `reset(seed=None, episode_id=None, **kwargs) -> Observation` | `reset(task_id=..., seed, episode_id)`. `Observation.metadata` has `prompt` (the instructions and issue), `task_id` and `tools` | `Environment.reset()` inside `run_episode`: setup and every leakage assertion |
+| `step(action, timeout_s=None) -> Observation` | `ListToolsAction` → `ListToolsObservation(tools=[Tool(name, description, input_schema)])` | `repogym.tools.definitions.TOOLS` |
+| | `CallToolAction(tool_name, arguments)` → `CallToolObservation(tool_name, result, error, done, reward)` | `Environment.step(Action(tool, arguments))`, as the `agent` user |
+| `ToolError(error_type, message)`, with `ToolErrorType` | `tool_not_found` (unknown tool), `invalid_args` (schema check), `execution_error` (tool error), `timeout` (command killed) | `validate_arguments`, the tool error text |
+| `reward` on the observation | `None` until `submit`; then the graded binary reward. `metadata` has `status`, `flags_raised` and `done_reason` | `grade()` after the episode, outside the agent's view |
+| `state` property → `State(episode_id, step_count)` (extra fields allowed) | Adds `task_id` and `done` | `EpisodeState` |
+| `SUPPORTS_CONCURRENT_SESSIONS` | `True`: every episode has its own container | |
+| `timeout_s` | Ignored. RepoGym's budgets bound every command, and they're recorded per episode | `Budgets` |
+
+* **How tools map to OpenEnv's MCP and tool-call RFCs.** Our six tools are exposed both as MCP
+  tools (`repogym mcp`, §13) and as OpenEnv `CallToolAction` and `ListToolsAction`. One
+  definition list, `TOOLS`, gives names, descriptions and JSON-schema `input_schema` to both, and
+  to ATIF's `tool_definitions`.
+* **The episode is a normal harness episode.** An OpenEnv episode gets the same setup checks,
+  budgets, grading, flags and ATIF trajectory as every other agent.
+* **Not included:** the HTTP/WebSocket server packaging (OpenEnv's `create_app`). That would need
+  OpenEnv's FastAPI stack as a dependency. With the adapter in place, it's a few lines once we
+  accept that dependency.
+
+**Conformance, checked locally, outside CI.** In an isolated environment
+(`uvx --python 3.11 --from openenv-core==0.3.0 --with-editable .`), `scripts/openenv_conformance.py`
+showed the following:
+* every adapter model has exactly OpenEnv's field set;
+* each one round-trips through OpenEnv's own model in both directions;
+* `ToolErrorType` values are identical;
+* `reset` and `step` take OpenEnv's parameters, and `state` is a property.
+
+A live episode through the adapter on `tomlkit-537`, applying the gold patch through
+`CallToolAction`, got reward 1. Unit tests (`tests/test_openenv_adapter.py`) cover the contract
+with a fake runner.
