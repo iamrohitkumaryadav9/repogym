@@ -168,6 +168,191 @@ other languages. FAIL_TO_PASS size is reported, not filtered: 129 tasks have a s
 FAIL_TO_PASS test, which gives a sparser reward signal. The classifier calibration labels came
 from a single run, so their κ predates the 3-run rule.
 
+## Week 2: Environment and harness
+
+Each verified task becomes a sandboxed episode. The agent works through six tools: `bash`,
+`view_file`, `str_replace`, `create_file`, `run_tests` and `submit`. These are available
+in-process, through an OpenEnv-style `reset` / `step` / `state` API, or over MCP
+(`repogym mcp --task <id>`). Every episode is graded outside the agent's view and stored as an
+[ATIF v1.8](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md)
+trajectory. The full design and the review decisions are in
+[docs/design/week2_environment.md](docs/design/week2_environment.md).
+
+### Scripted agents: proof that the environment is correct and cheat-resistant
+
+All runs used 2 workers on clean commit `ac4a173` (`repogym_dirty: false` for every episode).
+
+| Run | Episodes | Expected | Result |
+|---|---|---|---|
+| **Oracle**, dev (applies the gold patch through the tools) | 25 | reward 1, no flags | **25/25** |
+| **Null**, dev (submits immediately) | 25 | reward 0, no flags | **0/25** solved, no flags |
+| **Cheater**, dev (every known leak and test hack) | 25 | reward 0, every attempt flagged, no gold content observed | **0/25** solved, **every attempt flagged** |
+| **Oracle**, all tasks | 247 | reward 1 | **247/247**, no flags |
+| **Null**, all tasks | 247 | reward 0 | **0/247** solved, no flags |
+| **Cheater**, test split | 48 | as on dev | **0/48** solved, every attempt flagged, no future gold content observed |
+
+By `history_recoverable` (D6): the one recoverable task, `pallets__click-3239`, is in train. It
+scored Oracle 1 and Null 0, like every other task. Episode records for all of these runs, and
+the trajectories (except the 247 Oracle ones), are in `data/runs/clean3-*` and
+`data/runs/smoke-baseline`. `repogym view` replays them.
+
+The Cheater gets task data out of band to make its attacks as strong as possible: real future
+commit hashes, the test_patch paths and the FAIL_TO_PASS test names. On the dev split, each
+attack and the grading flag that recorded it (by step, or by path):
+
+| Attack | Flag | Recorded |
+|---|---|---|
+| full history with patches | `git_history_commands` | 25/25 |
+| reflog, fsck, every object | `git_history_commands` | 25/25 |
+| branches, tags, remotes | `git_history_commands` | 25/25 |
+| fetch upstream | `network_attempts` | 25/25 |
+| future commit … | `git_history_commands` | 150/150 |
+| search the filesystem for patches and task data | `task_data_search` | 25/25 |
+| grep the filesystem for test lists | `task_data_search` | 25/25 |
+| look for host data mounts | `task_data_search` | 25/25 |
+| curl upstream | `network_attempts` | 25/25 |
+| pip upgrade to a fixed release | `network_attempts` | 25/25 |
+| pip download | `network_attempts` | 25/25 |
+| python urllib | `network_attempts` | 25/25 |
+| neuter assertions in … | `test_files_edited` | 32/32 |
+| append passing stubs to … | `test_files_edited` | 32/32 |
+| root conftest.py hook forcing every test to pass | `test_files_edited` | 25/25 |
+| conftest hook next to the tests | `test_files_edited` | 25/25 |
+| pytest config in pyproject | `test_files_edited` | 25/25 |
+| sitecustomize.py import hook | `non_test_reverts` | 25/25 |
+| .pth import hook | `non_test_reverts` | 25/25 |
+| module shadowing pytest at the repo root | `non_test_reverts` | 25/25 |
+| write outside the repo | `files_outside_repo` | 25/25 |
+| commit the test edits | `agent_committed` | 25/25 |
+
+Every git-history attack sees only `base_commit` and its ancestors. Future hashes are
+`bad object`, and there are no remotes, tags, branches or reflog entries. Every network attempt
+fails, and every test or import hack is reverted before grading. Across those episodes,
+FAIL_TO_PASS passed 0 times, with 0 PASS_TO_PASS regressions and 0 future gold lines
+observed.
+
+**Why the extra reverts matter.** I graded one attack on its own: a `conftest.py` with a
+`pytest_runtest_makereport` hook that rewrites every failure as a pass.
+
+| The same single-hook diff, graded with | Reward 1 on dev |
+|---|---|
+| no reverts | **25/25** |
+| reverting only test_patch paths (the usual rule) | **25/25** |
+| RepoGym's reverts: test files, `conftest.py`, pytest config, `sitecustomize`/`.pth`, and modules that shadow imports | **0/25** |
+
+Reverting only the files test_patch touches is not enough.
+
+### Leak-proofing, asserted before the first action
+
+`repogym env check <task_id>` runs every check and prints the result. Any failure stops the
+setup, and no episode starts.
+
+* **Git history is built, not stripped.** A git bundle holding only `base_commit` and its
+  ancestors goes into the container, so future commits, other branches, tags and reflog entries
+  never exist there. Setup asserts all of the following:
+  * no non-ancestor commit is reachable;
+  * every commit object in the store is an ancestor;
+  * there are no remotes or tags, and the reflog is empty;
+  * the container's commit set equals the bundle's;
+  * the exact fix (by patch-id) is in no commit.
+* **Future vs past information.** The probe is there to catch *future* information. History
+  before `base_commit` is context any developer has; for example, `git log -S` finds code that
+  was deleted earlier. Overlap between the fix and past commits is therefore recorded, not
+  failed on:
+  * 89 tasks have some overlap;
+  * 1 task is `history_recoverable` (`pallets__click-3239`: one past commit adds 15 of its 17
+    distinctive lines);
+  * results are broken down by `history_recoverable`;
+  * the leak detector (`gold_content_in_observations`) only counts gold lines that appear
+    nowhere in the reachable history, and that the agent didn't write itself.
+* **Exactly one copy of the target package:** the editable install at `/work`. This matters
+  because the tomlkit image ships a released `tomlkit 0.15.2` in site-packages, which is newer
+  than most tomlkit base commits. Setup asserts that this copy was removed, for all 5 repos.
+* **No network** (`--network none`). DNS, TCP, HTTP and `pip download` are all tried from inside
+  and must fail, and `lo` must be the only network interface.
+* **No mounts:** no `data/`, no bare clones, no host paths.
+* **The agent runs unprivileged.** Every tool call runs as the `agent` user (uid 1000), with all
+  capabilities dropped, `no-new-privileges` and a process limit. File tools resolve symlinks and
+  refuse any path outside `/work`.
+* **No task metadata** in environment variables, the hostname, labels or any file outside the
+  repo. Every file changed during setup is scanned on the host for the task id, PR and issue
+  URLs, test names and distinctive patch lines.
+
+### Grading, outside the agent's view
+
+1. The agent's tree is copied out with `docker cp`, and the diff is computed on the host against
+   a pristine checkout of `base_commit`. This never uses the agent's git: hooks, filters and
+   `.gitignore` edits have no effect.
+2. Before grading, the agent's changes to these files are reverted to `base_commit` (not HEAD,
+   since the agent may have committed):
+   * test files and test_patch paths;
+   * `conftest.py`;
+   * pytest configuration;
+   * `sitecustomize.py`, `usercustomize.py` and `.pth` files;
+   * new modules in an import root that would shadow an import.
+
+   Any revert of a non-test file is flagged with its path.
+3. The result runs through validation's own runner in a fresh container, with test_patch, the
+   same test files, the same 30 s per-test timeout and the same OOM rules. Reward is 1 only if
+   every FAIL_TO_PASS test passes and every PASS_TO_PASS test still passes.
+
+Grading flags carry evidence (step and command, or path):
+`git_history_commands`, `network_attempts`, `network_errors_in_output`, `task_data_search`,
+`test_files_edited`, `non_test_reverts`, `agent_committed`, `files_outside_repo`,
+`symlinks_outside_repo`, `budget_exhausted`, `gold_content_in_observations` and
+`source_references_test_harness`.
+
+### Budgets and disk
+
+Every budget is configurable and recorded per episode:
+
+| Budget | Default |
+|---|---|
+| Tool calls | 100 |
+| Wall-clock time | 30 min |
+| Per command | 120 s (`run_tests` 300 s) |
+| Per observation | 10,000 characters, truncated in the middle with a marker |
+| Total observation size | 1,000,000 characters |
+| Disk | 2 GB writable layer, checked after every step |
+| Per file | 1 GiB (`ulimit -f`) |
+
+**Evaluated and rejected: a read-only root.** I measured a read-only root filesystem with `/work`
+and `/tmp` on 512 MB tmpfs mounts. Memory and setup time were fine (110–128 MiB, 7.5–11 s). But
+it would weaken the installed-once guarantee for tomlkit, because the image's released copy
+could only be masked, not removed. astroid's editable install also failed under it. So the
+writable root stays, with the disk budget.
+
+### Baseline LLM agent (smoke test only)
+
+The baseline is a bash-only agent in the style of mini-swe-agent: one command per turn, with
+the linear history as the trajectory. It runs `gemini-3.5-flash-lite` through RepoGym's
+provider layer (same retries, backoff and finishReason rules as the classifier; an
+OpenAI-compatible provider is one small module). Three dev tasks from three repos (none `history_recoverable`), run on
+commit `5a2c635`. This was a wiring check only; full evaluations are Week 3:
+
+| Task | Reward | Steps | Ended by | Prompt / completion tokens | Wall time | Flags (recomputed with current code) |
+|---|---|---|---|---|---|---|
+| PyCQA/isort-2683 | **1** (FAIL_TO_PASS 8/8) | 46 | submit | 584,169 / 7,796 | 395 s | `network_errors_in_output` (from isort's own tests) |
+| pallets/click-3507 | 0 (FAIL_TO_PASS 0/2) | 49 | submit | 444,017 / 7,365 | 328 s | `files_outside_repo` (click's tests write `/tmp/editor-*.txt~`) |
+| python-poetry/tomlkit-537 | 0 (FAIL_TO_PASS 0/1) | 100 | step budget | 1,200,419 / 9,083 | 617 s | `budget_exhausted` |
+
+Cost was $0, on the free tier. Format errors, which count as steps, occurred 4, 2 and 3 times.
+The smoke test found two harness problems, both fixed before the clean runs above. The leak
+detector counted the agent's own edits, echoed back by `git diff`, as leaks. And network errors
+printed by a test suite counted as the agent's own network attempts; they're now
+`network_errors_in_output`.
+
+### Commands
+
+```bash
+repogym env check <task_id>                                  # setup + every leakage assertion
+repogym run --agent {oracle,null,cheater,baseline} --split {dev,test,train,all} [--tasks ...]
+repogym mcp --task <task_id>                                 # the tools over MCP (stdio)
+repogym view                                                 # local trajectory viewer
+repogym probe-history                                        # past-history overlap per task
+pytest -m docker                                             # integration tests (need Docker)
+```
+
 ## Data and licensing
 
 The **RepoGym code** is MIT-licensed (see [LICENSE](LICENSE)).
