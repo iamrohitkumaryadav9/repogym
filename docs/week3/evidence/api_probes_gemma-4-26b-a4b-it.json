@@ -1,0 +1,104 @@
+{
+  "model": "gemma-4-26b-a4b-it",
+  "started_at": "2026-11-09T07:57:13+00:00",
+  "sdk": "2.33.0",
+  "count_burst": {
+    "calls": 35,
+    "seconds": 8.9,
+    "errors": [],
+    "n_errors": 0
+  },
+  "generation_after_count_burst": {
+    "ok": true,
+    "seconds": 1.86,
+    "result": {
+      "prompt": 7,
+      "output": 1,
+      "thoughts": 25
+    }
+  },
+  "count_tpm": {
+    "calls": [
+      {
+        "ok": true,
+        "seconds": 0.39,
+        "result": 28891
+      },
+      {
+        "ok": true,
+        "seconds": 0.39,
+        "result": 28891
+      },
+      {
+        "ok": true,
+        "seconds": 0.32,
+        "result": 28891
+      }
+    ],
+    "seconds": 1.1,
+    "tokens_counted": 86673
+  },
+  "generation_after_count_tpm": {
+    "ok": true,
+    "seconds": 2.08,
+    "result": {
+      "prompt": 7,
+      "output": 1,
+      "thoughts": 55
+    }
+  },
+  "thinking": {
+    "none": {
+      "ok": true,
+      "seconds": 5.33,
+      "result": {
+        "thoughts": 209,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemma-4-26b-a4b-it"
+      }
+    },
+    "level_minimal": {
+      "ok": true,
+      "seconds": 0.91,
+      "result": {
+        "thoughts": null,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemma-4-26b-a4b-it"
+      }
+    },
+    "level_low": {
+      "ok": false,
+      "seconds": 0.48,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    },
+    "level_high": {
+      "ok": true,
+      "seconds": 3.58,
+      "result": {
+        "thoughts": 127,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemma-4-26b-a4b-it"
+      }
+    },
+    "budget_0": {
+      "ok": false,
+      "seconds": 0.39,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    },
+    "budget_dynamic": {
+      "ok": false,
+      "seconds": 0.43,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    }
+  },
+  "ended_at": "2026-11-09T07:57:56+00:00"
+}

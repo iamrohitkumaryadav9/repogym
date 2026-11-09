@@ -1,0 +1,114 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "started_at": "2026-11-09T08:00:17+00:00",
+  "sdk": "2.33.0",
+  "count_burst": {
+    "calls": 20,
+    "seconds": 5.7,
+    "errors": [],
+    "n_errors": 0
+  },
+  "generation_after_count_burst": {
+    "ok": true,
+    "seconds": 3.51,
+    "result": {
+      "prompt": 7,
+      "output": 2,
+      "thoughts": null
+    }
+  },
+  "count_tpm": {
+    "calls": [
+      {
+        "ok": true,
+        "seconds": 0.33,
+        "result": 28891
+      },
+      {
+        "ok": true,
+        "seconds": 0.26,
+        "result": 28891
+      },
+      {
+        "ok": true,
+        "seconds": 0.26,
+        "result": 28891
+      }
+    ],
+    "seconds": 0.9,
+    "tokens_counted": 86673
+  },
+  "generation_after_count_tpm": {
+    "ok": true,
+    "seconds": 8.21,
+    "result": {
+      "prompt": 7,
+      "output": 2,
+      "thoughts": null
+    }
+  },
+  "thinking": {
+    "none": {
+      "ok": true,
+      "seconds": 5.71,
+      "result": {
+        "thoughts": null,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemini-3.5-flash-lite"
+      }
+    },
+    "level_minimal": {
+      "ok": true,
+      "seconds": 1.04,
+      "result": {
+        "thoughts": null,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemini-3.5-flash-lite"
+      }
+    },
+    "level_low": {
+      "ok": true,
+      "seconds": 0.78,
+      "result": {
+        "thoughts": null,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemini-3.5-flash-lite"
+      }
+    },
+    "level_high": {
+      "ok": true,
+      "seconds": 16.75,
+      "result": {
+        "thoughts": 185,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemini-3.5-flash-lite"
+      }
+    },
+    "budget_0": {
+      "ok": false,
+      "seconds": 0.4,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    },
+    "budget_dynamic": {
+      "ok": true,
+      "seconds": 1.16,
+      "result": {
+        "thoughts": 238,
+        "output": 3,
+        "text": "391",
+        "finish": "STOP",
+        "model_version": "gemini-3.5-flash-lite"
+      }
+    }
+  },
+  "ended_at": "2026-11-09T08:01:19+00:00"
+}

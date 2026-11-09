@@ -1,0 +1,89 @@
+{
+  "model": "gemma-4-31b-it",
+  "started_at": "2026-11-09T07:58:33+00:00",
+  "sdk": "2.33.0",
+  "count_burst": {
+    "calls": 35,
+    "seconds": 8.8,
+    "errors": [],
+    "n_errors": 0
+  },
+  "generation_after_count_burst": {
+    "ok": true,
+    "seconds": 14.83,
+    "result": {
+      "prompt": 7,
+      "output": 1,
+      "thoughts": 31
+    }
+  },
+  "count_tpm": {
+    "calls": [
+      {
+        "ok": true,
+        "seconds": 0.39,
+        "result": 28891
+      },
+      {
+        "ok": true,
+        "seconds": 0.34,
+        "result": 28891
+      },
+      {
+        "ok": true,
+        "seconds": 0.34,
+        "result": 28891
+      }
+    ],
+    "seconds": 1.1,
+    "tokens_counted": 86673
+  },
+  "generation_after_count_tpm": {
+    "ok": true,
+    "seconds": 43.0,
+    "result": {
+      "prompt": 7,
+      "output": 1,
+      "thoughts": 34
+    }
+  },
+  "thinking": {
+    "none": {
+      "ok": false,
+      "seconds": 0.7,
+      "status": 500,
+      "error": "INTERNAL"
+    },
+    "level_minimal": {
+      "ok": false,
+      "seconds": 0.61,
+      "status": 500,
+      "error": "INTERNAL"
+    },
+    "level_low": {
+      "ok": false,
+      "seconds": 0.39,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    },
+    "level_high": {
+      "ok": false,
+      "seconds": 14.65,
+      "status": 500,
+      "error": "INTERNAL"
+    },
+    "budget_0": {
+      "ok": false,
+      "seconds": 0.39,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    },
+    "budget_dynamic": {
+      "ok": false,
+      "seconds": 0.36,
+      "status": 400,
+      "error": "INVALID_ARGUMENT"
+    }
+  },
+  "ended_at": "2026-11-09T08:00:16+00:00"
+}
