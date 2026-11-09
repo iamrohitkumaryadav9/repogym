@@ -1,0 +1,12 @@
+# Gemini API free-tier limits per model (D11). Source: the operator's Google AI Studio
+# dashboard for this project (limits are per project and per model). Verified by the operator
+# on 2026-11-09. TPM counts INPUT tokens; quotas reset at midnight Pacific time:
+# https://aistudio.google.com/docs/rate-limits.md (checked 2026-11-09).
+source: "Google AI Studio dashboard (operator), project with no billing account"
+verified: "2026-11-09"
+reset_timezone: "America/Los_Angeles"
+margin: 0.9           # run at 90% of every limit
+models:
+  gemini-3.5-flash-lite: {rpm: 15, tpm: 250000, rpd: 500}
+  gemma-4-31b-it:        {rpm: 30, tpm: 16000,  rpd: 14400}
+  gemma-4-26b-a4b-it:    {rpm: 30, tpm: 16000,  rpd: 14400}
