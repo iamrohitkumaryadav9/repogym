@@ -16,6 +16,8 @@ requests count toward the daily quota, so we assume they do.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import math
 import os
@@ -72,13 +74,18 @@ class LimitsConfig:
 
 
 class QuotaLedger:
-    """Requests per model per quota day, persisted as JSON (atomic writes, thread-safe)."""
+    """Requests per model per quota day, persisted as JSON.
+
+    Safe across threads AND processes (several runners share one ledger, D20): every read and
+    update holds an exclusive file lock and re-reads the file inside it, and writes are
+    atomic. An earlier version kept an in-memory copy and rewrote the whole file, so concurrent
+    processes overwrote each other's counts.
+    """
 
     def __init__(self, path: Path, timezone: str = "America/Los_Angeles") -> None:
         self.path = path
         self.tz = ZoneInfo(timezone)
         self._lock = threading.Lock()
-        self._data: dict = json.loads(path.read_text()) if path.exists() else {}
 
     def day(self, ts: float) -> str:
         return datetime.fromtimestamp(ts, self.tz).date().isoformat()
@@ -89,39 +96,49 @@ class QuotaLedger:
         midnight = datetime(local.year, local.month, local.day, tzinfo=self.tz) + timedelta(days=1)
         return midnight.timestamp()
 
-    def _entry(self, model: str, ts: float) -> dict:
-        return self._data.setdefault(self.day(ts), {}).setdefault(
+    @contextlib.contextmanager
+    def _locked(self):
+        """The current ledger contents, under an exclusive cross-process lock."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock, open(self.path.with_suffix(".lock"), "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield json.loads(self.path.read_text()) if self.path.exists() else {}
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _entry(self, data: dict, model: str, ts: float) -> dict:
+        return data.setdefault(self.day(ts), {}).setdefault(
             model, {"requests": 0, "exhausted": False}
         )
 
     def requests(self, model: str, ts: float) -> int:
-        with self._lock:
-            return self._data.get(self.day(ts), {}).get(model, {}).get("requests", 0)
+        with self._locked() as data:
+            return data.get(self.day(ts), {}).get(model, {}).get("requests", 0)
 
     def exhausted(self, model: str, ts: float) -> bool:
-        with self._lock:
-            return self._data.get(self.day(ts), {}).get(model, {}).get("exhausted", False)
+        with self._locked() as data:
+            return data.get(self.day(ts), {}).get(model, {}).get("exhausted", False)
 
     def add(self, model: str, ts: float, n: int = 1) -> int:
-        with self._lock:
-            entry = self._entry(model, ts)
+        with self._locked() as data:
+            entry = self._entry(data, model, ts)
             entry["requests"] += n
-            self._save()
+            self._save(data)
             return entry["requests"]
 
     def mark_exhausted(self, model: str, ts: float) -> None:
-        with self._lock:
-            self._entry(model, ts)["exhausted"] = True
-            self._save()
+        with self._locked() as data:
+            self._entry(data, model, ts)["exhausted"] = True
+            self._save(data)
 
     def snapshot(self) -> dict:
-        with self._lock:
-            return json.loads(json.dumps(self._data))
+        with self._locked() as data:
+            return data
 
-    def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _save(self, data: dict) -> None:
         tmp = self.path.with_suffix(f".tmp{os.getpid()}")
-        tmp.write_text(json.dumps(self._data, indent=1, sort_keys=True))
+        tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
         os.replace(tmp, self.path)
 
 

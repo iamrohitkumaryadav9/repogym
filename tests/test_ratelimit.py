@@ -177,3 +177,26 @@ def test_acquire_returns_the_seconds_it_waited(tmp_path):
     assert lim.acquire(10) == 0.0
     waited = lim.acquire(10)  # the second request waits for the window to roll over
     assert waited == pytest.approx(60.0) and lim.waited_seconds == pytest.approx(60.0)
+
+
+def test_ledger_counts_are_not_lost_across_processes(tmp_path):
+    """Several runner processes share one ledger (D20): concurrent adds must all count."""
+    import multiprocessing as mp
+
+    path = tmp_path / "ledger.json"
+    QuotaLedger(path).add("other-model", 1_800_000_000.0, 5)  # written earlier by someone else
+    ctx = mp.get_context("fork")
+    procs = [ctx.Process(target=_add_many, args=(path, f"m{i}", 50)) for i in range(4)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    ledger = QuotaLedger(path)
+    assert [ledger.requests(f"m{i}", 1_800_000_000.0) for i in range(4)] == [50] * 4
+    assert ledger.requests("other-model", 1_800_000_000.0) == 5
+
+
+def _add_many(path, model, n):
+    ledger = QuotaLedger(path)
+    for _ in range(n):
+        ledger.add(model, 1_800_000_000.0)

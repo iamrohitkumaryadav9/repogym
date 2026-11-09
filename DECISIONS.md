@@ -494,6 +494,26 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     * The reservation for a failed attempt stays in the window, so a retry within the same
       minute waits instead of doubling the input.
 
+* *Amended 2026-11-09, 16:00 UTC: a ledger bug, fixed.*
+  * Each process kept an in-memory copy of `ledger.json` and rewrote the whole file on every
+    request, so concurrent processes overwrote each other's counts.
+  * It started mattering at 13:03 UTC, when the 31B probe began running beside the Gemma runner.
+    Later the live tests and the thinking experiments ran beside them too.
+  * **What it affects:**
+    * The RPD cross-check above uses counts as of 13:02, while one runner process was writing,
+      so it stands.
+    * Ledger counts after 13:03 on 9 November are unreliable for gemma-4-26b, gemma-4-31b and
+      gemini-3.1-flash-lite. None was near its daily limit (14,400, 14,400, and 500 with a
+      handful used).
+    * gemini-3.5-flash-lite had no requests after 13:02, so its count (252) is intact.
+    * For that window the per-attempt log (D16; one appended line per attempt, safe across
+      processes) is the source of truth.
+  * **Fix:** every ledger read and update now holds an exclusive file lock and re-reads the
+    file inside it. A unit test with 4 concurrent processes loses no counts; the old code lost
+    most of them.
+  * Processes started before the fix (the Gemma re-pilot runner and the 31B probe) keep the old
+    behaviour until they end. Every run from 2026-11-10 08:05 UTC starts on the fixed code.
+
 ## D21. Gemma's earlier thinking is kept in the history and counted exactly
 
 *Measured 2026-11-09; evidence in `docs/week3/evidence/thinking_history_gemma-4-26b-a4b-it.json`,

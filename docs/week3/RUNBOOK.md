@@ -73,6 +73,8 @@ python3 scripts/jobs.py start flash --dir data/runs/week3-repilot/jobs \
 
 ## Quota and retries (what happens automatically)
 
+* **Shared ledger:** several runner processes may run at once; they share `ledger.json`
+  safely through a file lock (D20, amended).
 * **Per-minute limits:** the limiter keeps each model under 90% of its RPM and TPM.
   `data/quota/ledger.json` counts every attempt per model per Pacific day; it is the source of
   truth for our own request counts (D20).
