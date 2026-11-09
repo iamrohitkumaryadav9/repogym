@@ -107,6 +107,8 @@ class ToolAgent:
     version: str = "1.0"
     system_prompt: str = SYSTEM_PROMPT
     settings: dict = field(default_factory=dict)  # recorded in provenance
+    # Log countTokens next to the estimate (D13); it never changes what is sent.
+    shadow_count: bool = False
 
     @property
     def model_name(self) -> str:
@@ -187,10 +189,16 @@ class ToolAgent:
                 if done:
                     return
                 continue
+            shadow = (
+                self.provider.count_tokens(self.system_prompt, view.messages, TOOLS)
+                if self.shadow_count
+                else None
+            )
             record = self.context.estimator.observe(
                 view.raw_estimate, view.estimated_tokens, gen.usage.prompt_tokens
             )
             metrics = call_metrics(gen, view, budget, record)
+            metrics["extra"]["repogym"]["count_tokens_shadow"] = shadow
             reply = gen.message
             history.append(reply)
             if not reply.calls:

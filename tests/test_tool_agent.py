@@ -262,3 +262,17 @@ def test_history_keeps_full_observations_even_when_the_prompt_clips_them():
     assert "w" * 20_000 in env.steps[0].observation  # stored in full (D14)
     shown = a.provider.seen[1][-1].results[0].output
     assert "clipped by RepoGym" in shown and len(shown) < 2_000  # the model saw a clip
+
+
+def test_shadow_count_is_logged_but_never_changes_the_prompt():
+    script = [reply(("bash", {"command": "ls"})), reply(("submit", {}))]
+    plain = agent(list(script))
+    shadowed = agent(list(script))
+    shadowed.shadow_count = True
+    shadowed.provider.count_tokens = lambda system, messages, tools: 4321
+    env_plain, env_shadow = run(plain), run(shadowed)
+    assert env_plain.steps[0].metrics["extra"]["repogym"]["count_tokens_shadow"] is None
+    assert env_shadow.steps[0].metrics["extra"]["repogym"]["count_tokens_shadow"] == 4321
+    assert [[m.text for m in p] for p in plain.provider.seen] == [
+        [m.text for m in p] for p in shadowed.provider.seen
+    ]
