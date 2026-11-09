@@ -160,6 +160,24 @@ counts against limits. Measured (`docs/week3/evidence/api_probes_*.json`):
 
 The RPD effect can only be seen on the AI Studio dashboard. It goes to the operator at Gate 1.
 
+*Amended 2026-11-09, after the live tests.*
+* **The SDK can't count the full request on the Developer API.** google-genai 2.33.0's
+  `models.count_tokens` raises `ValueError: system_instruction parameter is only supported in
+  Gemini Enterprise Agent Platform mode, not in Gemini Developer API mode`. The probes above
+  counted plain contents only, so they never hit this. The first shadow-count implementation
+  silently returned `None` on every call. It's fixed before any pilot data exists.
+* **The REST method can.** `countTokens` accepts either `contents` or a full
+  `generateContentRequest` (system instruction, tools, contents), but "never both"
+  ([API reference](https://aistudio.google.com/api-reference/tokens/count-tokens.md), checked
+  2026-11-09). The provider now posts a `generateContentRequest` directly.
+  * **Accuracy:** on a multi-turn tool-calling prompt it counted **519 against 520** reported
+    `prompt_tokens` on all three models, and 505 against 506 on another prompt
+    (`tests/integration/test_providers_live.py`).
+  * **Limits:** 30 full-request calls in 11.9 s on gemma-4-26b counted 1,166,700 tokens, about
+    73 times the 16K TPM, with no 429
+    (`docs/week3/evidence/count_tokens_full_request_gemma-4-26b-a4b-it.json`). That is
+    consistent with the RPM/TPM result above.
+
 * **Options.**
   * (a) The calibrated character estimator only.
   * (b) `countTokens` before every call.
