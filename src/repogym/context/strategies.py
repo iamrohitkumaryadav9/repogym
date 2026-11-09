@@ -104,9 +104,10 @@ class ContextManager:
         units: list[Unit],
         rendered: dict[int, list[Message]],
         states: dict[int, str],
+        show_summary: bool = True,
     ) -> list[Message]:
         head = task.copy()
-        if self.summary and self.summary_covers:
+        if show_summary and self.summary and self.summary_covers:
             head.extra_text = [*task.extra_text, SUMMARY_HEADER + self.summary]
         messages = [head]
         for unit in units:
@@ -181,24 +182,38 @@ class ContextManager:
 
         # Drop the oldest whole units until it fits (sliding_window's rule; the others' fallback).
         dropped = 0
-        while estimated > cfg.budget:
+        show_summary = True
+
+        def shrink() -> bool:
+            """Drop the oldest shown unit; as a last resort leave the summary out of this view
+            (it stays stored for later views). False when nothing more can go."""
+            nonlocal dropped, show_summary
             candidates = [u for u in units[:-1] if states[u.index] not in ("dropped", "summarized")]
-            if not candidates:
+            if candidates:
+                states[candidates[0].index] = "dropped"
+                dropped += 1
+            elif show_summary and self.summary and self.summary_covers:
+                show_summary = False
+                for u in units:  # absent from this view, so recorded as dropped
+                    if states[u.index] == "summarized":
+                        states[u.index] = "dropped"
+                events.append(ContextEvent("fallback", {"summary_omitted": True}))
+            else:
+                return False
+            return True
+
+        while estimated > cfg.budget:
+            if not shrink():
                 break
-            states[candidates[0].index] = "dropped"
-            dropped += 1
-            messages = self._assemble(task, units, rendered, states)
+            messages = self._assemble(task, units, rendered, states, show_summary)
             estimated, raw = self._estimate(system, tools, messages)
         # Optional exact check (countTokens, D13): verify the fit, and drop further if needed.
         exact = self.counter(system, tools, messages) if self.counter else None
         while exact is not None and exact > cfg.budget:
             self.estimator.observe(raw, estimated, exact)  # learn from the exact count
-            candidates = [u for u in units[:-1] if states[u.index] not in ("dropped", "summarized")]
-            if not candidates:
+            if not shrink():
                 break
-            states[candidates[0].index] = "dropped"
-            dropped += 1
-            messages = self._assemble(task, units, rendered, states)
+            messages = self._assemble(task, units, rendered, states, show_summary)
             estimated, raw = self._estimate(system, tools, messages)
             exact = self.counter(system, tools, messages)
         if dropped:
@@ -213,8 +228,8 @@ class ContextManager:
             units=states,
             clipped=clipped,
             events=events,
-            summary=self.summary,
-            summary_covers=self.summary_covers,
+            summary=self.summary if show_summary else None,
+            summary_covers=self.summary_covers if show_summary else 0,
             over_budget=not fits,
             exact_tokens=exact,
         )
@@ -222,5 +237,6 @@ class ContextManager:
             events.append(ContextEvent("overflow", {"estimated": estimated, "exact": exact}))
             raise ContextOverflow(
                 f"pinned prefix + latest unit is ~{estimated} tokens > B={cfg.budget}"
+                " (with every older unit and any summary already left out)"
             )
         return view

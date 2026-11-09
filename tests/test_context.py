@@ -1,7 +1,7 @@
 """Context strategies: invariants as property tests over random histories, plus targeted cases."""
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from repogym.context.base import (
@@ -103,6 +103,20 @@ nudges = st.lists(st.booleans(), min_size=25, max_size=25)
     nudge=nudges,
     strategy=st.sampled_from(STRATEGIES),
     budget=st.integers(3_000, 20_000),
+)
+# Found by hypothesis: the summary alone pushed the minimal view 1 token over B. The summary is
+# now left out of that view as a last resort instead of failing the episode.
+@example(
+    spec=[
+        ([743], False),
+        ([57], False),
+        ([1793], False),
+        ([2852], False),
+        ([0, 1717, 4756], False),
+    ],
+    nudge=[True, False, True, False] + [False] * 21,
+    strategy="llm_summary",
+    budget=3000,
 )
 def test_every_strategy_respects_budget_prefix_last_unit_and_pairs(spec, nudge, strategy, budget):
     # Nudge turns only between tool units, never as the latest unit.
@@ -244,3 +258,17 @@ def test_units_covered_by_a_summary_are_never_shown_again_after_masking():
     again.summary, again.summary_covers = cm.summary, cm.summary_covers
     second = again.build(SYSTEM, TOOLS, history)
     assert first.units[1] == second.units[1] == "summarized" and first.messages == second.messages
+
+
+def test_summary_is_left_out_of_a_view_only_when_nothing_else_can_go():
+    spec = [([743], False), ([57], True), ([1793], True), ([2852], False), ([0, 1717, 4756], False)]
+    history = history_from(spec)
+    cm, _ = manager("llm_summary", 3000)
+    view = cm.build(SYSTEM, TOOLS, history)
+    assert view.estimated_tokens <= 3000 and not view.over_budget
+    assert any(e.detail.get("summary_omitted") for e in view.events)
+    # The stored summary survives for later views; this view records its absence.
+    assert view.summary is None and cm.summary
+    assert "summarized" not in view.units.values()
+    assert not any(SUMMARY_HEADER in t for t in view.messages[0].extra_text)
+    check_view(history, view)
