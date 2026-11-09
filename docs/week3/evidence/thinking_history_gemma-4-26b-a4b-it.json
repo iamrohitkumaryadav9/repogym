@@ -1,0 +1,130 @@
+{
+ "checked_at": "2026-11-09T13:17:31+00:00",
+ "model": "gemma-4-26b-a4b-it",
+ "assistant_part_keys": [
+  [
+   "text",
+   "thought"
+  ],
+  [
+   "function_call",
+   "thought_signature"
+  ]
+ ],
+ "prior_thinking_tokens": [
+  1244,
+  10
+ ],
+ "thought_text_chars_in_replayed_replies": [
+  1864,
+  29
+ ],
+ "rows": [
+  {
+   "variant": "step1",
+   "at": "2026-11-09T13:14:36+00:00",
+   "status": 200,
+   "prompt_tokens": 572,
+   "thinking_tokens": 1244,
+   "calls": [
+    "bash"
+   ],
+   "attempts": [
+    200
+   ]
+  },
+  {
+   "variant": "step2",
+   "at": "2026-11-09T13:15:11+00:00",
+   "status": 200,
+   "prompt_tokens": 3089,
+   "thinking_tokens": 10,
+   "calls": [
+    "bash"
+   ],
+   "attempts": [
+    500,
+    500,
+    200
+   ]
+  },
+  {
+   "variant": "A_full",
+   "at": "2026-11-09T13:15:57+00:00",
+   "status": 200,
+   "prompt_tokens": 3139,
+   "thinking_tokens": 10,
+   "calls": [
+    "submit"
+   ],
+   "attempts": [
+    200
+   ]
+  },
+  {
+   "variant": "B_older_dummy",
+   "at": "2026-11-09T13:16:06+00:00",
+   "status": 200,
+   "prompt_tokens": 3139,
+   "thinking_tokens": 10,
+   "calls": [
+    "submit"
+   ],
+   "attempts": [
+    200
+   ]
+  },
+  {
+   "variant": "C_all_dummy",
+   "at": "2026-11-09T13:16:21+00:00",
+   "status": 200,
+   "prompt_tokens": 3139,
+   "thinking_tokens": 10,
+   "calls": [
+    "submit"
+   ],
+   "attempts": [
+    200
+   ]
+  },
+  {
+   "variant": "D_older_removed",
+   "at": "2026-11-09T13:16:33+00:00",
+   "status": 200,
+   "prompt_tokens": 3139,
+   "thinking_tokens": 10,
+   "calls": [
+    "submit"
+   ],
+   "attempts": [
+    200
+   ]
+  },
+  {
+   "variant": "E_all_thoughts_dropped",
+   "at": "2026-11-09T13:16:43+00:00",
+   "status": 200,
+   "prompt_tokens": 631,
+   "thinking_tokens": 899,
+   "calls": [
+    "submit"
+   ],
+   "attempts": [
+    200
+   ]
+  },
+  {
+   "variant": "F_older_thoughts_dropped",
+   "at": "2026-11-09T13:17:14+00:00",
+   "status": 200,
+   "prompt_tokens": 651,
+   "thinking_tokens": 409,
+   "calls": [
+    "submit"
+   ],
+   "attempts": [
+    200
+   ]
+  }
+ ]
+}
