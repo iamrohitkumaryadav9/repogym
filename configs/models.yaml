@@ -1,0 +1,28 @@
+# Pinned model settings (D10). Sampling and thinking follow each vendor's documented defaults:
+#   Gemini 3.x: "we strongly recommend not changing the default values" for temperature/top_p/top_k
+#     (https://aistudio.google.com/llms-full.txt, checked 2026-11-09); Flash-Lite's default
+#     thinking_level is "minimal" (https://aistudio.google.com/docs/thinking.md?generate-content=true).
+#   Gemma 4: temperature=1.0 top_p=0.95 top_k=64 (https://ai.google.dev/gemma/docs/core/model_card_4,
+#     last updated 2026-07-30). Thinking: API default (thinks by default; measured 2026-11-09).
+# token_counting: estimate | count_tokens | shadow (estimate drives the budget; countTokens is
+# logged alongside, to measure both at Gate 1). See D13.
+checked: "2026-11-09"
+models:
+  gemini-3.5-flash-lite:
+    provider: gemini
+    sampling: {}
+    thinking_level: minimal
+    max_output_tokens: 8192
+    token_counting: estimate
+  gemma-4-31b-it:
+    provider: gemini
+    sampling: {temperature: 1.0, top_p: 0.95, top_k: 64}
+    thinking_level: null
+    max_output_tokens: 8192
+    token_counting: shadow
+  gemma-4-26b-a4b-it:
+    provider: gemini
+    sampling: {temperature: 1.0, top_p: 0.95, top_k: 64}
+    thinking_level: null
+    max_output_tokens: 8192
+    token_counting: shadow
