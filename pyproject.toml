@@ -40,8 +40,11 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Integration tests need Docker and the local bare clones; run them with `pytest -m docker`.
-markers = ["docker: needs Docker and data/repos (excluded by default and in CI)"]
-addopts = "-m 'not docker'"
+markers = [
+    "docker: needs Docker and data/repos (excluded by default and in CI)",
+    "live: calls the Gemini API free tier and spends quota (manual only, never in CI)",
+]
+addopts = "-m 'not docker and not live'"
 
 [tool.ruff]
 line-length = 100

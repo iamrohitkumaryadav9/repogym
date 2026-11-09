@@ -314,3 +314,15 @@ def test_elapsed_cap_waits_for_the_reset_and_is_given_up_after_two(tmp_path):
     records = latest_records(exp.run_dir)[key]
     assert [r["termination"] for r in records] == ["api_failure", "api_failure"]
     assert cell_done(records)
+
+
+def test_the_committed_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp_path):
+    pilot = load(Path(__file__).parents[1] / "configs" / "experiments" / "pilot.yaml")
+    assert pilot.kind == "pilot" and pilot.split == "dev" and len(pilot.cells()) == 9
+    assert pilot.budgets.max_elapsed_seconds == 6 * 3600 and pilot.budgets.max_steps == 75
+    check(pilot, tmp_path / "none.md", tmp_path, final=False)  # allowed as is
+    pilot.task_ids = [*pilot.task_ids, TEST[0]]
+    with pytest.raises(guard.RunRefused, match="dev tasks only"):
+        check(pilot, tmp_path / "none.md", tmp_path, final=False)
+    with pytest.raises(guard.RunRefused):
+        check(pilot, tmp_path / "none.md", tmp_path, final=True)

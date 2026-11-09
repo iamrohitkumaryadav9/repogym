@@ -1,0 +1,35 @@
+# Week 3 pilot (Phase 1, section 2.7): checks the pipeline end to end before Gate 1.
+# Dev tasks only; tagged pilot in provenance; excluded from every later analysis.
+#
+# Task selection (stratified across repos, fixed rule): the alphabetically first dev task of
+# each of the three repos with the most dev tasks (ties broken by repo name):
+#   pallets/click (8) -> pallets__click-3473
+#   pylint-dev/astroid (7) -> pylint-dev__astroid-3057
+#   PyCQA/isort (4, tied with python-poetry/tomlkit, first by name) -> PyCQA__isort-2683
+name: week3-pilot
+kind: pilot
+split: dev
+release: v0.1
+tasks:
+  - pallets__click-3473
+  - pylint-dev__astroid-3057
+  - PyCQA__isort-2683
+models:
+  - gemma-4-26b-a4b-it
+  - gemma-4-31b-it
+  - gemini-3.5-flash-lite
+strategies: [obs_mask]
+repeats: 1
+context:
+  budget: 12000
+  clip_tokens: 2000
+  keep_observations: 5
+  keep_recent_units: 4
+  summary_trigger: 0.8
+  summary_max_tokens: 1000
+budgets:
+  max_steps: 75
+  max_wall_seconds: 3600  # ACTIVE time only, throttling excluded (D17); E1 value set at Gate 1
+  max_elapsed_seconds: 21600  # hung-episode safety net incl. waits; hitting it = api_failure
+  max_observation_chars: 200000  # storage cap, not the model's view (D14)
+  max_total_observation_chars: 20000000
