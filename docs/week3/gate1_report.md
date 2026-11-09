@@ -431,6 +431,72 @@ Its outcome stands as recorded. tomlkit-536 restarted from scratch under the new
   reminders, repetition (exact and after masking), budget violations, the drop fallback,
   preserved-thinking share, steps, and time.
 
+### 9.1 Gemma 26B half (finished 9 November, 19:21 UTC)
+
+| Cell | Attempt | Termination | Steps | Source edited | `str_replace` (failed) | `run_tests` / `submit` | Exact repeats (after a mask) | Drop fallbacks | Preserved thinking, median / max share of prompt |
+|---|---|---|---|---|---|---|---|---|---|
+| attrs-1448 | 1 | api_failure (5xx, old rule) | 9 | no | 0 | 0 / 0 | 0 (0) | 0 | 6% / 24% |
+| attrs-1448 | 2 | api_failure (5xx, old rule) | 34 | `validators.py` | 6 (4) | 2 / 0 | 6 (1) | 19 | 53% / 65% |
+| attrs-1448 | 3 | **submitted, unsolved** | 41 | `validators.py` | 9 (6) | 1 / 1 | 16 (1) | 22 | 47% / 58% |
+| tomlkit-536 | 1 | **context_failure** | 18 | no | 0 | 0 / 0 | 6 (2) | 0 | 10% / 38% |
+| click-3504 | 1 | api_failure (5xx, new rule: 11 errors over 60 min) | 4 | no | 0 | 0 / 0 | 0 (0) | 0 | 10% / 12% |
+| click-3504 | 2 | step_cap | 75 | no (5 scratch scripts) | 0 | 0 / 0 | 17 (1) | 69 | 40% / 71% |
+
+**Solves: 0 of 3 cells.** The Flash-Lite half runs on 10 November.
+
+**What the fixes changed (against the first pilot):**
+
+* **Reasoning:** text with every call in every episode (0 `missing_reasoning` events, against
+  0 of 254 replies with text before).
+* **Masking-driven repetition is gone:** 1–2 repeats after a mask per episode, against 19–22
+  before. The repeats left are re-runs of the agent's own scratch scripts and greps, made
+  while the earlier result was still visible.
+* **The agent now edits, tests and submits.** attrs-1448 attempt 3 edited
+  `src/attr/validators.py`, the right file, and submitted. The hidden tests failed.
+
+**What's still wrong:**
+
+1. **Preserved thinking crowds the budget (D21).**
+   * In the long episodes Gemma's own earlier thinking is a median of 40–53% of each prompt,
+     peaking at 71%. The drop fallback fires 19–69 times per episode, so older observations
+     are dropped to make room.
+   * **It also caused tomlkit-536's `context_failure`.** One reply thought 5,385 tokens. Its
+     replayed thought text (about 10,770 billed tokens) belongs to the latest unit, which
+     can't be dropped. With the prefix and the clipped observation, the prompt needed about
+     14.7K tokens against B = 12,000.
+   * Under D21 (keep the thoughts, as the Gemma docs say), a single long-thinking reply can
+     make the next prompt impossible to fit.
+2. **`str_replace` friction:** 10 of 15 failed. Mostly `old` not matching the file's
+   whitespace (the agent reconstructs code it can no longer see); once `old` and `new` were
+   identical. Separately, `run_tests` was called once without its required `target`.
+3. **click-3504 attempt 2 spent its 75 steps on 5 scratch scripts** and never edited the
+   source. It got the final-steps nudge at step 60.
+
+**Decisions this needs at Gate 1.** These are options, not yet implemented:
+
+* **A. Preserved thinking that can't fit.** If the latest reply's preserved thinking alone
+  makes the minimal prompt exceed B, then as a last resort drop the thought text of the
+  *older* replies first. If that still isn't enough, drop it from the latest reply too.
+  Record a `thoughts_dropped` event, count it per episode, and report it beside
+  `summary_omitted`.
+  * This departs from the Gemma docs only when following them makes the episode impossible.
+  * Alternatives:
+    * accept `context_failure` as the outcome;
+    * give Gemma a larger B (its effective TPM is 14,400, so B could rise to about 14,000 at
+      most);
+    * set Gemma's thinking to `minimal`, which conflicts with D22.
+  * **I recommend A**, visible and counted, the same way `summary_omitted` was handled.
+* **B. `str_replace` failure message.** Show the closest matching lines of the file (with line
+  numbers) when `old` isn't found, so the agent can correct its whitespace without re-reading.
+  This is a tool-message change only; the semantics stay strict.
+* **C. `run_tests` default.** When `target` is missing, return the error plus the list of
+  test files that exist, rather than just "missing required argument". Message only.
+
+**Bug found and fixed.** When a call finally failed after 60 minutes of 5xx retries, its
+waiting wasn't reported, so it counted as active time: click-3504 attempt 1 showed 3,751 s
+"active" over 4 steps. Errors now carry their waiting, and the agent reports it before the
+episode ends (tested). Fixed before the 10 November runs.
+
 ## 10. Time estimates
 
 These are based on pilot throughput. They will be revised with the re-pilot's steps per
