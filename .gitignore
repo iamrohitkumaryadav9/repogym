@@ -17,3 +17,6 @@ data/runs/*
 !data/runs/smoke-baseline/
 data/runs/clean3-all-oracle/trajectories/
 data/runs/clean3-all-oracle/diffs/
+
+# Week 3: the persistent daily quota ledger (local state, D11)
+data/quota/
