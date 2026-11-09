@@ -275,6 +275,22 @@ The data is all 4 finished episodes plus 31B's surviving trajectory
   `docs/week3/evidence/reliability_gemma-4-31b-it.jsonl`.
 * Call 1 (13:03:59): HTTP 500 after 1.1 s. The results come to Gate 2.
 
+### 6.2b Candidate replacement: gemini-3.1-flash-lite (pilot pending)
+
+* **Model ID**, verified with `models.list` on 2026-11-09: `models/gemini-3.1-flash-lite`,
+  version `3.1-flash-lite-05-2026`. It's the stable release; a `-preview` also exists.
+* **Limits** (operator dashboard): 15 RPM, 250K TPM, 500 RPD.
+* **Thinking:** `high`, per D22. The Gemini thinking docs list "Gemini 3.5 & 3.1 Flash-Lite"
+  together, with `minimal` as the default and `high` supported.
+* **Live tests (9 November):** all passed.
+  * The first function call carries a signature.
+  * A 3-step loop with signatures replayed works (bash, bash, submit).
+  * A dropped middle step plus a summary part is accepted.
+  * `countTokens` gave 519 against 520 reported (offline check only).
+* **Pilot:** the same 3 dev tasks as the re-pilot, from 08:05 UTC on 10 November, on its own
+  quota (`configs/experiments/pilot_gemini31.yaml`).
+* *Results go here, beside the 31B probe, for the replace-or-keep decision at Gate 1.*
+
 ### 6.3 Pre-registered reliability rule for E3
 
 This goes into PREREGISTRATION.md at Gate 2:
@@ -407,6 +423,10 @@ Its outcome stands as recorded. tomlkit-536 restarted from scratch under the new
   The sandbox container survives the hold because it runs `sleep infinity`. That part is
   confirmed by its configuration, not by a live 20-hour hold yet. Whether the `high` check
   actually crosses a reset will show in its record (`episode_seconds.quota_pause`).
+* **Live confirmation of the quota hold:** *to be filled from the 10 November runs.* I'll report
+  whether any episode actually crossed the 08:00 UTC reset in a hold, using its
+  `episode_seconds.quota_pause`, its single attempt record, and its container name staying the
+  same in the heartbeat. If no run triggers a hold naturally, I'll say so; I won't force one.
 * *Results: to be completed when the runs finish:* solves, missing-reasoning events,
   reminders, repetition (exact and after masking), budget violations, the drop fallback,
   preserved-thinking share, steps, and time.
