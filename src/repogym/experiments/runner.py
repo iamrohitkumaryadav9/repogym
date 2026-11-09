@@ -34,7 +34,7 @@ from repogym.context.strategies import ContextManager
 from repogym.context.tokens import TokenEstimator
 from repogym.experiments import guard
 from repogym.experiments.spec import Cell, Experiment, release_tasks
-from repogym.harness import EpisodeRecord, run_episode
+from repogym.harness import EpisodeRecord, _write_lock, run_episode
 from repogym.providers.gemini import GeminiProvider, GeminiSettings
 from repogym.ratelimit import AttemptLog, LimitsConfig, QuotaLedger, RateLimiter
 
@@ -120,13 +120,27 @@ def gemini_api_key() -> str:
 
 
 def latest_records(run_dir: Path) -> dict[str, list[dict]]:
+    """Episode records per cell, in order. Safe while records are being appended: in this
+    process it takes the writer's lock; across processes, a final line without its newline is
+    a write in progress and is skipped (any other malformed line still raises)."""
     path = run_dir / "episodes.jsonl"
     out: dict[str, list[dict]] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                record = json.loads(line)
-                out.setdefault(record.get("episode_key") or record["task_id"], []).append(record)
+    if not path.exists():
+        return out
+    with _write_lock:
+        text = path.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    complete, partial = lines[:-1], lines[-1]  # text ends with "\n" unless a write is under way
+    for line in complete:
+        if line.strip():
+            record = json.loads(line)
+            out.setdefault(record.get("episode_key") or record["task_id"], []).append(record)
+    if partial.strip():
+        try:
+            record = json.loads(partial)
+        except ValueError:
+            return out  # another process is still writing this record
+        out.setdefault(record.get("episode_key") or record["task_id"], []).append(record)
     return out
 
 

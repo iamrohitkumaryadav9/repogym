@@ -447,3 +447,14 @@ def test_the_gemini31_pilot_matches_the_repilot_tasks_at_high_thinking(tmp_path)
     check(g31, tmp_path / "none.md", tmp_path, final=False)
     limits = LimitsConfig.load(g31.limits_path).effective("gemini-3.1-flash-lite")
     assert limits == {"rpm": 13, "tpm": 225000, "rpd": 450}
+
+
+def test_records_being_written_by_another_process_are_skipped_not_fatal(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    done = json.dumps({"episode_key": "a", "termination": "submitted"})
+    (run_dir / "episodes.jsonl").write_text(done + "\n" + done[:40])  # second line half written
+    assert list(latest_records(run_dir)) == ["a"]
+    (run_dir / "episodes.jsonl").write_text(done[:40] + "\n" + done + "\n")
+    with pytest.raises(ValueError):  # a malformed COMPLETE line is real corruption
+        latest_records(run_dir)
