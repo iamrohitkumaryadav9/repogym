@@ -266,7 +266,7 @@ def test_summary_is_left_out_of_a_view_only_when_nothing_else_can_go():
     cm, _ = manager("llm_summary", 3000)
     view = cm.build(SYSTEM, TOOLS, history)
     assert view.estimated_tokens <= 3000 and not view.over_budget
-    assert any(e.detail.get("summary_omitted") for e in view.events)
+    assert [e.kind for e in view.events].count("summary_omitted") == 1
     # The stored summary survives for later views; this view records its absence.
     assert view.summary is None and cm.summary
     assert "summarized" not in view.units.values()

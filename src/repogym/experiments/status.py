@@ -56,6 +56,9 @@ def summary(
                 "budget_violations": sum(
                     (r.get("accounting") or {}).get("budget_violations", 0) for r in finals
                 ),
+                "summary_omitted": sum(
+                    (r.get("accounting") or {}).get("summary_omitted", 0) for r in finals
+                ),
                 "mean_episode_minutes": round(mean / 60, 1) if mean else None,
                 "eta_hours": round(remaining * mean / 3600, 1) if mean else None,
             }

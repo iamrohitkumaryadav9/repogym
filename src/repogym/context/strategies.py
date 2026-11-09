@@ -197,7 +197,9 @@ class ContextManager:
                 for u in units:  # absent from this view, so recorded as dropped
                     if states[u.index] == "summarized":
                         states[u.index] = "dropped"
-                events.append(ContextEvent("fallback", {"summary_omitted": True}))
+                events.append(
+                    ContextEvent("summary_omitted", {"summary_covers": self.summary_covers})
+                )
             else:
                 return False
             return True
