@@ -24,7 +24,7 @@ TOOLS: list[dict] = [
     {
         "name": "view_file",
         "description": (
-            "Show a file with line numbers. Paths are relative to /work. At most 400 lines per "
+            "Show a file with line numbers. Paths are relative to /work. At most 150 lines per "
             "call; use start_line and end_line to page through longer files."
         ),
         "parameters": {

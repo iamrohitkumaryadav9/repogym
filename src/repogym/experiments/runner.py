@@ -40,8 +40,49 @@ from repogym.ratelimit import LimitsConfig, QuotaLedger, RateLimiter
 log = structlog.get_logger()
 LEDGER_PATH = DATA_DIR / "quota" / "ledger.json"
 HARNESS_ERROR_RERUNS = 1
-# A cell that hits the elapsed safety cap this often is given up on and reported (D17).
-ELAPSED_CAP_ATTEMPTS = 2
+# A cell gets at most this many api_failure attempts; then it is recorded as api_failure,
+# reported, and not retried (D16). Daily-quota interruptions don't count: they come from our
+# own quota scheduling, not the model, and are retried after the reset.
+MAX_API_FAILURES = 3
+
+
+class Heartbeat:
+    """In-progress state of one model's worker, for `repogym status` (one small JSON file)."""
+
+    def __init__(self, run_dir: Path, model: str, clock=time.time) -> None:
+        self.path = run_dir / "heartbeat" / f"{model}.json"
+        self.model, self.clock = model, clock
+        self.state: dict = {"model": model, "state": "starting"}
+
+    def _write(self, **changes) -> None:
+        self.state.update(changes, updated_at=self.clock())
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.state), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def start(self, cell: str, attempt: int) -> None:
+        self.state = {"model": self.model}
+        self._write(
+            state="running",
+            cell=cell,
+            attempt=attempt,
+            episode_started_at=self.clock(),
+            step=0,
+            last_model_call_at=None,
+        )
+
+    def progress(self, step: int) -> None:
+        self._write(step=step, last_model_call_at=self.clock())
+
+    def idle(self, termination: str | None) -> None:
+        self._write(state="between_episodes", last_termination=termination)
+
+    def sleeping(self, until: float, reason: str | None) -> None:
+        self._write(state="sleeping", sleeping_until=until, reason=reason)
+
+    def finished(self) -> None:
+        self._write(state="done")
 
 
 def gemini_api_key() -> str:
@@ -64,22 +105,42 @@ def latest_records(run_dir: Path) -> dict[str, list[dict]]:
     return out
 
 
+def counted_api_failures(records: list[dict]) -> int:
+    return sum(
+        r.get("termination") == "api_failure" and r.get("error_type") != "DailyQuotaExhausted"
+        for r in records
+    )
+
+
 def cell_done(records: list[dict]) -> bool:
-    """Done unless never run, the latest was an api_failure, or it needs its one rerun."""
+    """Done unless never run, the latest was a retryable api_failure, or it needs its rerun."""
     if not records:
         return False
     latest = records[-1].get("termination")
     if latest == "api_failure":
-        stalled = sum(r.get("done_reason") == "budget:elapsed" for r in records)
-        return stalled >= ELAPSED_CAP_ATTEMPTS
+        return counted_api_failures(records) >= MAX_API_FAILURES
     if latest == "harness_error":
         reruns = sum(r.get("termination") == "harness_error" for r in records)
         return reruns > HARNESS_ERROR_RERUNS
     return True
 
 
-def provenance(experiment: Experiment, cell: Cell) -> dict:
+def attempt_summary(record: dict, index: int) -> dict:
     return {
+        "attempt": record.get("attempt") or index,
+        "episode_id": record.get("episode_id"),
+        "termination": record.get("termination"),
+        "error_type": record.get("error_type"),
+        "steps": record.get("steps"),
+        "trajectory": record.get("trajectory"),
+    }
+
+
+def provenance(experiment: Experiment, cell: Cell, previous: list[dict] | None = None) -> dict:
+    previous = previous or []
+    return {
+        "attempt": len(previous) + 1,
+        "previous_attempts": [attempt_summary(r, i) for i, r in enumerate(previous, 1)],
         "name": experiment.name,
         "kind": experiment.kind,
         "pilot": experiment.kind == "pilot",
@@ -115,15 +176,10 @@ def make_provider(model: str, settings: dict, api_key: str, limiter):
 
 
 def make_agent(experiment: Experiment, cell: Cell, provider) -> ToolAgent:
-    counting = experiment.model_settings[cell.model].get("token_counting", "estimate")
-    counter = provider.count_tokens if counting == "count_tokens" else None
-    cm = ContextManager(cell.strategy, experiment.context, TokenEstimator(), counter=counter)
-    return ToolAgent(
-        provider,
-        cm,
-        shadow_count=counting == "shadow",
-        settings=experiment.model_settings[cell.model],
-    )
+    # countTokens is never called in timed runs (D20): the calibrated estimator, corrected
+    # for re-billed thinking, sizes every prompt.
+    cm = ContextManager(cell.strategy, experiment.context, TokenEstimator())
+    return ToolAgent(provider, cm, settings=experiment.model_settings[cell.model])
 
 
 class Runner:
@@ -162,21 +218,30 @@ class Runner:
         provider = self.provider_fn(
             model, self.experiment.model_settings[model], self.api_key, limiter
         )
+        beat = Heartbeat(self.experiment.run_dir, model, self.clock)
         while not self.stop.is_set():
             cells = self.pending(model)
             if not cells:
+                beat.finished()
                 return
             cell = cells[0]
+            previous = latest_records(self.experiment.run_dir).get(cell.key, [])
+            attempt = len(previous) + 1
+            beat.start(cell.key, attempt)
+            agent = make_agent(self.experiment, cell, provider)
+            agent.progress = beat.progress
             record = self.episode_fn(
                 self.tasks[cell.task_id],
-                make_agent(self.experiment, cell, provider),
+                agent,
                 self.experiment.run_dir,
                 self.experiment.budgets,
                 release=self.experiment.release,
                 api_tier="free",
                 episode_key=cell.key,
-                experiment=provenance(self.experiment, cell),
+                experiment=provenance(self.experiment, cell, previous),
+                attempt=attempt,
             )
+            beat.idle(record.termination)
             if self.on_done:
                 self.on_done(record)
             # Daily quota, or an episode stalled past the elapsed safety cap by throttling:
@@ -190,8 +255,10 @@ class Runner:
                 log.warning(
                     "sleep_until_reset", model=model, seconds=round(wait), why=record.done_reason
                 )
+                beat.sleeping(self.clock() + wait, record.done_reason or record.error_type)
                 self.sleep(wait)
             elif record.termination == "api_failure":
+                beat.sleeping(self.clock() + 60, record.error_type)
                 self.sleep(60)  # per-minute exhaustion or an outage: brief pause, then retry
 
     def run(self) -> None:

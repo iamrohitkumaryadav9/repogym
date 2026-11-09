@@ -185,6 +185,7 @@ def fake_record(task, agent, run_dir, budgets, **kw):
         budgets=budgets,
         episode_key=kw["episode_key"],
         experiment=kw["experiment"],
+        attempt=kw.get("attempt"),
     )
 
 
@@ -301,19 +302,87 @@ def test_budgets_from_the_experiment_file_reach_the_episode(tmp_path):
     assert budgets.max_observation_chars == 200000 and b == 11000 and strategy == "obs_mask"
 
 
-def test_elapsed_cap_waits_for_the_reset_and_is_given_up_after_two(tmp_path):
+def test_api_failures_get_three_attempts_each_kept_and_numbered(tmp_path):
+    exp = write_exp(tmp_path, models=["gemma-4-31b-it"], tasks=DEV[:1])
+    key = exp.cells()[0].key
+    failed = {"status": "agent_error", "error_type": "ProviderUnavailable", "reward": 0}
+    episodes = FakeEpisodes({key: [failed, failed, failed]})
+    sleeps = []
+    runner(exp, episodes, tmp_path, sleeps=sleeps).run()
+    assert episodes.calls == [key, key, key]  # three attempts, then given up and reported
+    assert sleeps == [60, 60]  # no pause after giving up
+    records = latest_records(exp.run_dir)[key]
+    assert [r["attempt"] for r in records] == [1, 2, 3]
+    assert [r["termination"] for r in records] == ["api_failure"] * 3 and cell_done(records)
+    previous = records[2]["experiment"]["previous_attempts"]
+    assert records[2]["experiment"]["attempt"] == 3
+    assert [p["attempt"] for p in previous] == [1, 2]
+    assert all(p["error_type"] == "ProviderUnavailable" for p in previous)
+
+
+def test_daily_quota_interruptions_do_not_count_toward_the_three(tmp_path):
+    daily = {"termination": "api_failure", "error_type": "DailyQuotaExhausted"}
+    other = {"termination": "api_failure", "error_type": "ProviderUnavailable"}
+    assert not cell_done([daily, daily, daily, other])
+    assert not cell_done([other, other])
+    assert cell_done([other, daily, other, other])
+
+
+def test_elapsed_cap_waits_for_the_reset_and_counts_as_an_api_failure(tmp_path):
     exp = write_exp(tmp_path, models=["gemma-4-26b-a4b-it"], tasks=DEV[:1])
     key = exp.cells()[0].key
-    stalled = {"done_reason": "budget:elapsed", "reward": 0}
-    episodes = FakeEpisodes({key: [stalled, stalled]})
+    episodes = FakeEpisodes({key: [{"done_reason": "budget:elapsed", "reward": 0}]})
     sleeps, now = [], 1_800_000_000.0
     runner(exp, episodes, tmp_path, clock=lambda: now, sleeps=sleeps).run()
     reset = QuotaLedger(tmp_path / "l.json").next_reset(now)
-    assert episodes.calls == [key, key]  # tried twice, then reported, never forever
-    assert sleeps == [pytest.approx(reset - now + 60)]  # no pointless sleep after giving up
+    assert episodes.calls == [key, key] and sleeps == [pytest.approx(reset - now + 60)]
     records = latest_records(exp.run_dir)[key]
-    assert [r["termination"] for r in records] == ["api_failure", "api_failure"]
-    assert cell_done(records)
+    assert [r["termination"] for r in records] == ["api_failure", "submitted"]
+
+
+def test_heartbeat_tracks_the_worker_and_status_shows_it(tmp_path):
+    import json as _json
+
+    from repogym.experiments.runner import Heartbeat
+
+    exp = write_exp(tmp_path, models=["gemma-4-26b-a4b-it"], tasks=DEV[:1])
+    t = [1_800_000_000.0]
+    beat = Heartbeat(exp.run_dir, "gemma-4-26b-a4b-it", clock=lambda: t[0])
+    beat.start("cell-1", 2)
+    t[0] += 30
+    beat.progress(7)
+    t[0] += 45
+    row = summary(exp, now=t[0], ledger=QuotaLedger(tmp_path / "ledger.json"))[0]
+    w = row["worker"]
+    assert w["state"] == "running" and w["cell"] == "cell-1" and w["attempt"] == 2
+    assert w["step"] == 7 and w["seconds_since_model_call"] == 45 and w["episode_seconds"] == 75
+    beat.sleeping(t[0] + 600, "ProviderUnavailable")
+    w = summary(exp, now=t[0] + 100, ledger=QuotaLedger(tmp_path / "ledger.json"))[0]["worker"]
+    assert w["state"] == "sleeping" and w["sleep_remaining_seconds"] == 500
+    beat.finished()
+    stored = _json.loads((exp.run_dir / "heartbeat" / "gemma-4-26b-a4b-it.json").read_text())
+    assert stored["state"] == "done"
+
+
+def test_a_full_run_leaves_a_done_heartbeat_per_model(tmp_path):
+    exp = write_exp(tmp_path)
+    runner(exp, FakeEpisodes(), tmp_path).run()
+    rows = summary(exp, now=1_800_000_000.0, ledger=QuotaLedger(tmp_path / "ledger.json"))
+    assert all(r["worker"]["state"] == "done" for r in rows)
+    assert all(r["attempts"] == 2 and r["cells_retried"] == 0 for r in rows)
+
+
+def test_episode_files_are_never_overwritten(tmp_path):
+    from repogym.harness import file_stem, unique_stem
+
+    assert file_stem("cell", None) == "cell" and file_stem("cell", 2) == "cell__a2"
+    first = unique_stem(tmp_path, "cell__a1")
+    (tmp_path / "trajectories" / f"{first}.json").write_text("{}")
+    second = unique_stem(tmp_path, "cell__a1")  # the same name again: suffixed, not reused
+    assert first == "cell__a1" and second == "cell__a1__dup2"
+    (tmp_path / "diffs").mkdir()
+    (tmp_path / "diffs" / "other.diff").write_text("")
+    assert unique_stem(tmp_path, "other") == "other__dup2"
 
 
 def test_the_committed_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp_path):

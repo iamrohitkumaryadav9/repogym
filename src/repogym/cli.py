@@ -636,14 +636,32 @@ def status(experiment: Annotated[Path, typer.Option(help="Experiment file.")]) -
     exp = spec.load(experiment)
     for row in summary(exp):
         typer.echo(
-            f"{row['model']:24} {row['done']}/{row['total']} done, {row['solved']} solved | "
-            f"requests today {row['requests_today']}/{row['rpd_limit']}"
+            f"{row['model']:24} {row['done']}/{row['total']} done, {row['solved']} solved, "
+            f"{row['attempts']} attempts ({row['cells_retried']} cells retried, "
+            f"{row['cells_given_up']} given up) | requests today "
+            f"{row['requests_today']}/{row['rpd_limit']}"
             f"{' (EXHAUSTED)' if row['quota_exhausted_today'] else ''} | tokens in "
             f"{row['input_tokens']:,} out {row['output_tokens']:,} | violations "
-            f"{row['budget_violations']}, summary omitted {row['summary_omitted']} | "
-            f"{row['terminations']} | "
+            f"{row['budget_violations']}, summary omitted {row['summary_omitted']}, "
+            f"missing reasoning {row['missing_reasoning']} | {row['terminations']} | "
             f"~{row['mean_episode_minutes']} min/episode, ETA {row['eta_hours']} h"
         )
+        w = row["worker"]
+        if not w:
+            typer.echo("    worker: not started")
+        elif w.get("state") == "running":
+            since = w.get("seconds_since_model_call")
+            typer.echo(
+                f"    running {w['cell']} attempt {w['attempt']}: step {w.get('step', 0)}, "
+                f"{round(w.get('episode_seconds', 0) / 60)} min in, last model call "
+                f"{'none yet' if since is None else f'{since} s ago'}"
+            )
+        elif w.get("state") == "sleeping":
+            typer.echo(
+                f"    sleeping {w.get('sleep_remaining_seconds')} s more ({w.get('reason')})"
+            )
+        else:
+            typer.echo(f"    {w.get('state')} (updated {w.get('seconds_since_update')} s ago)")
 
 
 @app.command("llm-audit")

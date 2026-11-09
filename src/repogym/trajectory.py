@@ -76,21 +76,19 @@ def build(
         """Context events as ATIF system steps (RFC convention: extra.context_management)."""
         while pending and pending[0].after_step <= upto:
             event = pending.pop(0)
-            kind = CONTEXT_TYPES.get(event.kind, ("other", "none"))
+            extra: dict[str, Any] = {
+                "repogym": {"event": event.kind, "detail": event.detail, "metrics": event.metrics}
+            }
+            if event.kind in CONTEXT_TYPES:  # other events (e.g. missing_reasoning) aren't
+                kind = CONTEXT_TYPES[event.kind]  # context management
+                extra["context_management"] = {"type": kind[0], "boundary": kind[1]}
             out_steps.append(
                 {
                     "step_id": len(out_steps) + 1,
                     "timestamp": event.at,
                     "source": "system",
                     "message": event.message,
-                    "extra": {
-                        "context_management": {"type": kind[0], "boundary": kind[1]},
-                        "repogym": {
-                            "event": event.kind,
-                            "detail": event.detail,
-                            "metrics": event.metrics,
-                        },
-                    },
+                    "extra": extra,
                 }
             )
 

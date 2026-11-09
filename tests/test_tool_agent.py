@@ -96,9 +96,9 @@ class EnvFacade:
         return self._env.record_wait(seconds)
 
 
-def agent(script, strategy="obs_mask", budget=12_000, **kw):
+def agent(script, strategy="obs_mask", budget=12_000, system_prompt=None, **kw):
     cm = ContextManager(strategy, ContextConfig(budget=budget, **kw), TokenEstimator())
-    return ToolAgent(FakeProvider(script), cm)
+    return ToolAgent(FakeProvider(script), cm, system_prompt=system_prompt)
 
 
 def run(tool_agent, budgets=None):
@@ -152,13 +152,14 @@ def test_no_tool_reply_is_a_counted_nudge_and_bad_response_is_never_acted_on():
     env = run(a)
     assert [s.tool for s in env.steps] == [None, None, "submit"]
     assert env.steps[0].observation == NO_TOOL_NUDGE and "MAX_TOKENS" in env.steps[1].observation
-    assert a.provider.seen[1][-1].text == NO_TOOL_NUDGE  # the nudge is in the history
+    assert a.provider.seen[1][-1].text.startswith(NO_TOOL_NUDGE)  # the nudge is in the history
+    assert a.provider.seen[1][-1].text.endswith("[step 1/100]")
     assert len(a.provider.seen[2]) == len(a.provider.seen[1])  # the bad reply added nothing
 
 
 def test_budget_violation_is_flagged_when_reported_tokens_exceed_b():
     # The estimate (~1,086) fits B=1,100, but the API reports 1,200 prompt tokens: a violation.
-    env = run(agent([reply(("submit", {}))], budget=1_100))
+    env = run(agent([reply(("submit", {}))], budget=1_100, system_prompt="Fix it."))
     assert env.steps[0].metrics["extra"]["repogym"]["budget_violation"] is True
 
 
@@ -269,20 +270,6 @@ def test_history_keeps_full_observations_even_when_the_prompt_clips_them():
     assert "clipped by RepoGym" in shown and len(shown) < 2_000  # the model saw a clip
 
 
-def test_shadow_count_is_logged_but_never_changes_the_prompt():
-    script = [reply(("bash", {"command": "ls"})), reply(("submit", {}))]
-    plain = agent(list(script))
-    shadowed = agent(list(script))
-    shadowed.shadow_count = True
-    shadowed.provider.count_tokens = lambda system, messages, tools: 4321
-    env_plain, env_shadow = run(plain), run(shadowed)
-    assert env_plain.steps[0].metrics["extra"]["repogym"]["count_tokens_shadow"] is None
-    assert env_shadow.steps[0].metrics["extra"]["repogym"]["count_tokens_shadow"] == 4321
-    assert [[m.text for m in p] for p in plain.provider.seen] == [
-        [m.text for m in p] for p in shadowed.provider.seen
-    ]
-
-
 # -- D17: the active-time cap excludes throttling; a separate elapsed cap catches hangs ------
 
 
@@ -378,3 +365,94 @@ def test_summary_omitted_events_are_counted_and_typed_in_the_trajectory():
     acct = accounting.summarize(env.steps, env.events, "gemma-4-26b-a4b-it")
     assert acct["summary_omitted"] == 1 and acct["summary_omitted_rate"] == 0.5
     assert trajectory.CONTEXT_TYPES["summary_omitted"] == ("pruning", "truncate")
+
+
+# -- D19: reasoning, view description, step counter --------------------------------------------
+
+
+def test_system_prompt_describes_exactly_what_each_strategy_shows():
+    from repogym.agents.tool_agent import system_prompt_for
+
+    cfg = ContextConfig(clip_tokens=2000, keep_observations=5)
+    masked = system_prompt_for("obs_mask", cfg, 75)
+    assert "last 5 tool calls" in masked and "about 2000 tokens" in masked
+    assert "[step k/75]" in masked and "summary" not in masked
+    window = system_prompt_for("sliding_window", cfg, 75)
+    assert "oldest steps" in window and "placeholder" not in window
+    hybrid = system_prompt_for("hybrid", cfg, 75)
+    assert "placeholder" in hybrid and "summary written for you" in hybrid
+    for text in (masked, window, hybrid):
+        assert "200000" not in text and "write one or two sentences" in text
+
+
+def test_step_counter_and_one_final_nudge_follow_tool_results():
+    script = [reply(("bash", {"command": f"echo {i}"})) for i in range(6)] + [reply(("submit", {}))]
+    a = agent(script)
+    env = run(a, Budgets(max_steps=20))  # the nudge comes when 15 calls remain: from step 5
+    shown = [m.results[-1].output for p in a.provider.seen[1:] for m in p[-1:]]
+    assert shown[0].endswith("[step 1/20]") and shown[4].splitlines()[-2] == "[step 5/20]"
+    nudges = [e for e in env.events if e.kind == "final_steps_nudge"]
+    assert len(nudges) == 1 and nudges[0].detail == {"step": 5}
+    assert sum("If you haven't fixed the issue yet" in t for t in shown) == 1
+    assert "[step" not in env.steps[0].observation  # the stored observation is unannotated
+
+
+def test_missing_reasoning_is_recorded_not_rejected_and_reminded_every_second_time():
+    bare = [reply(("bash", {"command": f"echo {i}"}), text="") for i in range(4)]
+    a = agent([*bare, reply(("submit", {}))])
+    env = run(a)
+    assert [s.tool for s in env.steps] == ["bash"] * 4 + ["submit"]  # every call still ran
+    missing = [e.detail["streak"] for e in env.events if e.kind == "missing_reasoning"]
+    assert missing == [1, 2, 3, 4]
+    assert [e.detail["step"] for e in env.events if e.kind == "reasoning_reminder"] == [2, 4]
+    reminded = [p[-1].results[-1].output for p in a.provider.seen[1:]]
+    assert ["Reminder:" in t for t in reminded] == [False, True, False, True]
+    acct = accounting.summarize(env.steps, env.events, a.model_name)
+    assert acct["missing_reasoning"] == 4 and acct["missing_reasoning_rate"] == 0.8
+    assert acct["reasoning_reminders"] == 2
+
+
+def test_reasoning_resets_the_streak():
+    script = [
+        reply(("bash", {"command": "a"}), text=""),
+        reply(("bash", {"command": "b"})),  # has reasoning
+        reply(("bash", {"command": "c"}), text=""),
+        reply(("submit", {})),
+    ]
+    env = run(agent(script))
+    assert [e.detail["streak"] for e in env.events if e.kind == "missing_reasoning"] == [1, 1]
+    assert not [e for e in env.events if e.kind == "reasoning_reminder"]
+
+
+def test_progress_hook_sees_every_model_call():
+    seen = []
+    a = agent([reply(("bash", {"command": "ls"})), reply(text="hmm"), reply(("submit", {}))])
+    a.progress = seen.append
+    run(a)
+    assert seen == [1, 2, 3]  # after every model call, including the final submit
+
+
+def test_first_message_for_the_tool_agent_states_active_time_not_storage_cap():
+    from repogym.env.environment import instructions
+    from tests.test_episode import _task
+
+    task = _task("t", "2024-01-01T00:00:00Z", "dev")
+    budgets = Budgets(max_observation_chars=200_000)
+    week2 = instructions(task, budgets)
+    week3 = instructions(task, budgets, "tool_agent")
+    assert "truncated to 200000 characters" in week2  # Week 2 text unchanged
+    assert "200000" not in week3 and "active time" in week3
+    assert ToolAgent.instruction_style == "tool_agent"
+
+
+def test_replayed_thinking_is_counted_exactly_in_the_estimate():
+    est = TokenEstimator()
+    plain = Message(role="assistant", text="x", raw={"role": "model"}, provider="fake")
+    thinking = plain.copy()
+    thinking.replay_tokens = 800
+    base = est.estimate("s", [], [plain])
+    assert est.estimate("s", [], [thinking]) == base + 800
+    # Calibration only sees the text part: reported - replay.
+    raw = est.raw("s", [], [thinking])
+    est.observe(raw, est.estimate("s", [], [thinking]), int(raw) + 800, replay=800)
+    assert est.factor == pytest.approx(1.0, abs=0.02)

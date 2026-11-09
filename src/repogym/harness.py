@@ -82,7 +82,8 @@ class EpisodeRecord(BaseModel):
     disk_written_mb: float | None = None  # writable layer at the end (setup included)
     peak_disk_mb: float | None = None
     # Week 3: cell identity and provenance, a coarse outcome category, and accounting.
-    episode_key: str | None = None  # unique per experiment cell; names the trajectory file
+    episode_key: str | None = None  # the experiment cell; with `attempt`, names the files
+    attempt: int | None = None  # 1, 2, ... per cell; every attempt keeps its own files
     experiment: dict | None = None  # cell, experiment/config hashes, model and strategy settings
     error_type: str | None = None
     termination: str | None = None  # submitted | step_cap | wallclock_cap | context_failure
@@ -151,10 +152,15 @@ def run_episode(
     api_tier: str | None = None,
     episode_key: str | None = None,
     experiment: dict | None = None,
+    attempt: int | None = None,
 ) -> EpisodeRecord:
     manifest = json.loads((RELEASE_DIR / release / "manifest.json").read_text())
     commit, dirty = repogym_commit()
-    env = Environment(task, budgets)
+    # An agent may describe its own view of observations (the Week 3 tool agent clips and
+    # masks them); the environment's first message then doesn't claim otherwise (D14).
+    env = Environment(
+        task, budgets, instruction_style=getattr(agent, "instruction_style", "default")
+    )
     record = EpisodeRecord(
         run_id=run_dir.name,
         episode_id=env.episode_id,
@@ -174,6 +180,7 @@ def run_episode(
         seed=seed,
         api_tier=api_tier,
         episode_key=episode_key or task.task_id,
+        attempt=attempt,
         experiment=experiment,
     )
     if record.image_digest != manifest["docker_images"].get(env.spec.image):
@@ -294,15 +301,33 @@ def run_episode(
     errors = trajectory.validate(doc)
     if errors:
         raise ValueError(f"ATIF validation failed for {task.task_id}: {errors[:5]}")
-    key = record.episode_key or task.task_id
-    diff_path = run_dir / "diffs" / f"{key}.diff"
+    stem = unique_stem(run_dir, file_stem(record.episode_key or task.task_id, record.attempt))
+    diff_path = run_dir / "diffs" / f"{stem}.diff"
     diff_path.parent.mkdir(parents=True, exist_ok=True)
     diff_path.write_text(work.diff, encoding="utf-8", errors="surrogateescape")
-    path = run_dir / "trajectories" / f"{key}.json"
+    path = run_dir / "trajectories" / f"{stem}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=1, ensure_ascii=False))
     record.trajectory = str(path.relative_to(run_dir))
     return _finish(record, run_dir)
+
+
+def file_stem(key: str, attempt: int | None) -> str:
+    return key if attempt is None else f"{key}__a{attempt}"
+
+
+def unique_stem(run_dir: Path, stem: str) -> str:
+    """Never overwrite an earlier episode's trajectory or diff: suffix on any collision."""
+    with _write_lock:
+        candidate, n = stem, 1
+        while (run_dir / "trajectories" / f"{candidate}.json").exists() or (
+            run_dir / "diffs" / f"{candidate}.diff"
+        ).exists():
+            n += 1
+            candidate = f"{stem}__dup{n}"
+        (run_dir / "trajectories").mkdir(parents=True, exist_ok=True)
+        (run_dir / "trajectories" / f"{candidate}.json").touch()  # reserve the name
+        return candidate
 
 
 def _totals(env: Environment) -> tuple[dict[str, int | None], float | None]:

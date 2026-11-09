@@ -6,6 +6,7 @@ without a comparable list price (Gemma on this API), cost is None and only token
 
 from __future__ import annotations
 
+import collections
 from pathlib import Path
 
 import yaml
@@ -83,6 +84,8 @@ def summarize(steps, events, model: str | None, prices: dict | None = None) -> d
         }
 
     omitted = sum(e.kind == "summary_omitted" for e in events)
+    kinds = collections.Counter(e.kind for e in events)
+    with_calls = sum(1 for c in agent_calls if c is not None)
     errors = [c["estimation_error"] for c in agent_calls if c.get("estimation_error") is not None]
     return {
         **totals(calls),
@@ -91,6 +94,13 @@ def summarize(steps, events, model: str | None, prices: dict | None = None) -> d
         # Prompts that had to leave the stored summary out to fit B (D18); a validity signal.
         "summary_omitted": omitted,
         "summary_omitted_rate": round(omitted / len(agent_calls), 4) if agent_calls else None,
+        # Replies with a tool call but no reasoning text, and the reminders they caused (D19).
+        "missing_reasoning": kinds["missing_reasoning"],
+        "missing_reasoning_rate": round(kinds["missing_reasoning"] / with_calls, 4)
+        if with_calls
+        else None,
+        "reasoning_reminders": kinds["reasoning_reminder"],
+        "final_steps_nudges": kinds["final_steps_nudge"],
         "estimation_error_mean": round(sum(errors) / len(errors), 4) if errors else None,
         "estimation_error_max_under": round(min(errors), 4) if errors else None,
         "retries": sum(c.get("retries", 0) for c in calls),

@@ -106,11 +106,20 @@ class Experiment:
 
 def agent_prompts() -> dict:
     """The agent's fixed prompt texts (frozen before E3 with everything else)."""
+    import inspect
+
     from repogym.agents import tool_agent
     from repogym.context import base
+    from repogym.env import environment
 
     return {
         "system": tool_agent.SYSTEM_PROMPT,
+        "view_text": tool_agent.VIEW_TEXT,
+        "strategy_view": {k: list(v) for k, v in tool_agent.STRATEGY_VIEW.items()},
+        "step_counter": tool_agent.STEP_COUNTER,
+        "final_nudge": [tool_agent.FINAL_NUDGE, tool_agent.FINAL_STEPS],
+        "reasoning_reminder": [tool_agent.REASONING_REMINDER, tool_agent.REMIND_EVERY],
+        "env_instructions": inspect.getsource(environment.instructions),
         "summary_system": tool_agent.SUMMARY_SYSTEM,
         "no_tool_nudge": tool_agent.NO_TOOL_NUDGE,
         "summary_header": base.SUMMARY_HEADER,
@@ -175,6 +184,11 @@ def load(path: Path) -> Experiment:
     missing = [m for m in data["models"] if m not in all_settings]
     if missing:
         raise ExperimentError(f"models not in {models_file.name}: {missing}")
+    counting = [
+        m for m in data["models"] if all_settings[m].get("token_counting", "estimate") != "estimate"
+    ]
+    if counting:  # D20: countTokens is for offline validation only, never in a timed run
+        raise ExperimentError(f"token_counting other than 'estimate' for {counting} (D20)")
     context = ContextConfig(**data.get("context", {}))
     budgets = Budgets(**data.get("budgets", {}))
     check_observation_caps(context, budgets)

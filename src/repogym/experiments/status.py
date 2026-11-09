@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections import Counter
 from datetime import datetime
 
-from repogym.experiments.runner import LEDGER_PATH, cell_done, latest_records
+from repogym.experiments.runner import (
+    LEDGER_PATH,
+    MAX_API_FAILURES,
+    cell_done,
+    counted_api_failures,
+    latest_records,
+)
 from repogym.experiments.spec import Experiment
 from repogym.ratelimit import LimitsConfig, QuotaLedger
 
@@ -18,6 +25,25 @@ def _seconds(record: dict) -> float | None:
     except (KeyError, TypeError, ValueError):
         return None
     return (end - start).total_seconds()
+
+
+def heartbeat(experiment: Experiment, model: str, now: float) -> dict | None:
+    """The worker's in-progress state, with ages in seconds (None if it never started)."""
+    path = experiment.run_dir / "heartbeat" / f"{model}.json"
+    try:
+        beat = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for key, label in (
+        ("updated_at", "seconds_since_update"),
+        ("last_model_call_at", "seconds_since_model_call"),
+        ("episode_started_at", "episode_seconds"),
+    ):
+        if beat.get(key):
+            beat[label] = round(now - beat[key])
+    if beat.get("sleeping_until"):
+        beat["sleep_remaining_seconds"] = max(round(beat["sleeping_until"] - now), 0)
+    return beat
 
 
 def summary(
@@ -35,6 +61,7 @@ def summary(
         durations = [d for r in finals if (d := _seconds(r))]
         mean = sum(durations) / len(durations) if durations else None
         remaining = len(cells) - len(done)
+        attempts = {c.key: records.get(c.key, []) for c in cells}
         rows.append(
             {
                 "model": model,
@@ -59,6 +86,15 @@ def summary(
                 "summary_omitted": sum(
                     (r.get("accounting") or {}).get("summary_omitted", 0) for r in finals
                 ),
+                "attempts": sum(len(v) for v in attempts.values()),
+                "cells_retried": sum(len(v) > 1 for v in attempts.values()),
+                "cells_given_up": sum(
+                    counted_api_failures(v) >= MAX_API_FAILURES for v in attempts.values()
+                ),
+                "missing_reasoning": sum(
+                    (r.get("accounting") or {}).get("missing_reasoning", 0) for r in finals
+                ),
+                "worker": heartbeat(experiment, model, now),
                 "mean_episode_minutes": round(mean / 60, 1) if mean else None,
                 "eta_hours": round(remaining * mean / 3600, 1) if mean else None,
             }
