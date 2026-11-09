@@ -12,11 +12,12 @@ import time
 from dataclasses import dataclass, field
 
 from repogym.providers.base import (
-    BadResponse,
     Generation,
     Message,
     ToolCall,
     Usage,
+    api_seconds,
+    bad_response,
 )
 from repogym.providers.retry import Outcome, RetryPolicy, run_with_retries
 
@@ -25,8 +26,8 @@ OK_FINISH = {"STOP"}
 
 
 class NullLimiter:
-    def acquire(self, estimated_tokens: int) -> None:
-        pass
+    def acquire(self, estimated_tokens: int) -> float:
+        return 0.0
 
     def settle(self, prompt_tokens: int | None) -> None:
         pass
@@ -177,7 +178,7 @@ class GeminiProvider:
         from google.genai import errors
 
         contents, config = to_contents(messages), self._config(system, tools)
-        started = time.monotonic()
+        started, waits = time.monotonic(), []
 
         def send() -> Outcome:
             try:
@@ -195,16 +196,17 @@ class GeminiProvider:
             policy=self.policy,
             model=self.settings.model,
             sleep=self._sleep,
-            before_attempt=lambda: self.limiter.acquire(estimated_tokens),
+            before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
             on_daily=self.limiter.mark_daily_exhausted,
         )
         usage = usage_of(response.usage_metadata)
         self.limiter.settle(usage.prompt_tokens)
-        latency = round(time.monotonic() - started, 3)
+        waited = sum(waits)
+        latency = api_seconds(started, waited, attempts)
         candidate = (response.candidates or [None])[0]
         finish = candidate.finish_reason.name if candidate and candidate.finish_reason else None
         if candidate is None or candidate.content is None or finish not in OK_FINISH:
-            raise BadResponse(f"{self.settings.model}: finish_reason {finish}", attempts)
+            raise bad_response(f"{self.settings.model}: finish_reason {finish}", attempts, waited)
         return Generation(
             message=from_content(candidate.content),
             usage=usage,
@@ -213,6 +215,7 @@ class GeminiProvider:
             latency_seconds=latency,
             http_status=200,
             attempts=attempts,
+            limiter_wait_seconds=waited,
         )
 
     def generate_text(
@@ -232,7 +235,7 @@ class GeminiProvider:
             ),
             **self.settings.sampling,
         )
-        started = time.monotonic()
+        started, waits = time.monotonic(), []
 
         def send() -> Outcome:
             try:
@@ -253,11 +256,12 @@ class GeminiProvider:
             policy=self.policy,
             model=self.settings.model,
             sleep=self._sleep,
-            before_attempt=lambda: self.limiter.acquire(estimated_tokens),
+            before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
             on_daily=self.limiter.mark_daily_exhausted,
         )
         usage = usage_of(response.usage_metadata)
         self.limiter.settle(usage.prompt_tokens)
+        waited = sum(waits)
         candidate = (response.candidates or [None])[0]
         finish = candidate.finish_reason.name if candidate and candidate.finish_reason else None
         # A summary cut off by max_tokens is still usable text; anything else is not.
@@ -266,16 +270,19 @@ class GeminiProvider:
             or candidate.content is None
             or finish not in OK_FINISH | {"MAX_TOKENS"}
         ):
-            raise BadResponse(f"{self.settings.model}: summary finish_reason {finish}", attempts)
+            raise bad_response(
+                f"{self.settings.model}: summary finish_reason {finish}", attempts, waited
+            )
         text = "".join(p.text or "" for p in candidate.content.parts or [] if not p.thought)
         return Generation(
             message=Message(role="assistant", text=text),
             usage=usage,
             finish_reason=finish,
             model_version=response.model_version,
-            latency_seconds=round(time.monotonic() - started, 3),
+            latency_seconds=api_seconds(started, waited, attempts),
             http_status=200,
             attempts=attempts,
+            limiter_wait_seconds=waited,
         )
 
     def count_tokens(self, system: str, messages: list[Message], tools: list[dict]) -> int | None:

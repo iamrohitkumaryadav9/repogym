@@ -169,3 +169,11 @@ def test_server_retry_delay_is_honoured_above_the_backoff():
 
     value, attempts = run_with_retries(send, policy=RetryPolicy(), model="m", sleep=sleeps.append)
     assert value == "ok" and sleeps[0] >= 33 and attempts[0].retry_delay == 33.0
+
+
+def test_acquire_returns_the_seconds_it_waited(tmp_path):
+    clock = FakeClock()
+    lim = limiter(tmp_path, clock, rpm=1)
+    assert lim.acquire(10) == 0.0
+    waited = lim.acquire(10)  # the second request waits for the window to roll over
+    assert waited == pytest.approx(60.0) and lim.waited_seconds == pytest.approx(60.0)

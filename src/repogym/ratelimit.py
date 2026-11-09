@@ -160,8 +160,10 @@ class RateLimiter:
                 reset_at=self.ledger.next_reset(now),
             )
 
-    def acquire(self, estimated_tokens: int) -> None:
+    def acquire(self, estimated_tokens: int) -> float:
+        """Block until the request fits; returns the seconds this call waited."""
         estimated_tokens = max(int(estimated_tokens or 0), 0)
+        waited = 0.0
         while True:
             with self._lock:
                 now = self._clock()
@@ -175,9 +177,10 @@ class RateLimiter:
                 if fits_rpm and fits_tpm:
                     self._window.append([now, float(estimated_tokens)])
                     self.ledger.add(self.model, now)
-                    return
+                    return waited
                 wait = max(WINDOW_SECONDS - (now - self._window[0][0]), 0.05)
             self.waited_seconds += wait
+            waited += wait
             self._sleep(wait)
 
     def settle(self, prompt_tokens: int | None) -> None:

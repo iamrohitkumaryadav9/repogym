@@ -8,6 +8,7 @@ edit only user and tool messages.
 from __future__ import annotations
 
 import copy
+import time
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -72,16 +73,28 @@ class Generation:
     latency_seconds: float
     http_status: int
     attempts: list[Attempt] = field(default_factory=list)
+    limiter_wait_seconds: float = 0.0  # time the rate limiter held the request back
 
     @property
     def retries(self) -> int:
         return max(len(self.attempts) - 1, 0)
+
+    @property
+    def backoff_seconds(self) -> float:
+        return sum(a.slept or 0.0 for a in self.attempts)
+
+    @property
+    def wait_seconds(self) -> float:
+        """Throttling time inside the call (limiter + retry backoff); excluded from the
+        active-time cap (D17)."""
+        return self.limiter_wait_seconds + self.backoff_seconds
 
 
 class ProviderError(RuntimeError):
     def __init__(self, message: str, attempts: list[Attempt] | None = None) -> None:
         super().__init__(message)
         self.attempts = attempts or []
+        self.wait_seconds = 0.0  # set by providers when known (limiter + backoff)
 
 
 class DailyQuotaExhausted(ProviderError):
@@ -121,3 +134,15 @@ class ToolProvider(Protocol):
     def count_tokens(
         self, system: str, messages: list[Message], tools: list[dict]
     ) -> int | None: ...
+
+
+def api_seconds(started: float, waited: float, attempts: list) -> float:
+    """Wall time of the call minus limiter waits and retry backoff: time spent on the API."""
+    backoff = sum(a.slept or 0.0 for a in attempts)
+    return round(max(time.monotonic() - started - waited - backoff, 0.0), 3)
+
+
+def bad_response(message: str, attempts: list, waited: float) -> BadResponse:
+    exc = BadResponse(message, attempts)
+    exc.wait_seconds = waited + sum(a.slept or 0.0 for a in attempts)
+    return exc

@@ -12,7 +12,15 @@ import time
 
 import httpx
 
-from repogym.providers.base import BadResponse, Generation, Message, ToolCall, Usage
+from repogym.providers.base import (
+    BadResponse,
+    Generation,
+    Message,
+    ToolCall,
+    Usage,
+    api_seconds,
+    bad_response,
+)
 from repogym.providers.gemini import NullLimiter
 from repogym.providers.retry import Outcome, RetryPolicy, run_with_retries
 
@@ -88,7 +96,7 @@ class OpenAICompatProvider:
         )
 
     def _call(self, body: dict, estimated_tokens: int):
-        started = time.monotonic()
+        started, waits = time.monotonic(), []
 
         def send() -> Outcome:
             try:
@@ -108,7 +116,7 @@ class OpenAICompatProvider:
             policy=self.policy,
             model=self.name,
             sleep=self._sleep,
-            before_attempt=lambda: self.limiter.acquire(estimated_tokens),
+            before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
             on_daily=self.limiter.mark_daily_exhausted,
         )
         u = data.get("usage") or {}
@@ -120,7 +128,8 @@ class OpenAICompatProvider:
             total_tokens=u.get("total_tokens"),
         )
         self.limiter.settle(usage.prompt_tokens)
-        return data, usage, attempts, round(time.monotonic() - started, 3)
+        waited = sum(waits)
+        return data, usage, attempts, api_seconds(started, waited, attempts), waited
 
     def generate(
         self, system: str, messages: list[Message], tools: list[dict], estimated_tokens: int = 0
@@ -142,14 +151,14 @@ class OpenAICompatProvider:
             "max_tokens": self.max_output_tokens,
             **self.sampling,
         }
-        data, usage, attempts, latency = self._call(body, estimated_tokens)
+        data, usage, attempts, latency, waited = self._call(body, estimated_tokens)
         try:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
-            raise BadResponse(f"{self.name}: no choices", attempts) from exc
+            raise bad_response(f"{self.name}: no choices", attempts, waited) from exc
         finish = choice.get("finish_reason")
         if finish not in ("stop", "tool_calls"):
-            raise BadResponse(f"{self.name}: finish_reason {finish}", attempts)
+            raise bad_response(f"{self.name}: finish_reason {finish}", attempts, waited)
         return Generation(
             message=from_message(choice.get("message") or {}),
             usage=usage,
@@ -158,6 +167,7 @@ class OpenAICompatProvider:
             latency_seconds=latency,
             http_status=200,
             attempts=attempts,
+            limiter_wait_seconds=waited,
         )
 
     def generate_text(
@@ -172,11 +182,13 @@ class OpenAICompatProvider:
                 {"role": "user", "content": prompt},
             ],
         }
-        data, usage, attempts, latency = self._call(body, estimated_tokens)
+        data, usage, attempts, latency, waited = self._call(body, estimated_tokens)
         choice = (data.get("choices") or [{}])[0]
         if choice.get("finish_reason") not in ("stop", "length"):
-            raise BadResponse(
-                f"{self.name}: summary finish_reason {choice.get('finish_reason')}", attempts
+            raise bad_response(
+                f"{self.name}: summary finish_reason {choice.get('finish_reason')}",
+                attempts,
+                waited,
             )
         text = (choice.get("message") or {}).get("content") or ""
         return Generation(
@@ -187,6 +199,7 @@ class OpenAICompatProvider:
             latency_seconds=latency,
             http_status=200,
             attempts=attempts,
+            limiter_wait_seconds=waited,
         )
 
     def count_tokens(self, system: str, messages: list[Message], tools: list[dict]) -> int | None:
