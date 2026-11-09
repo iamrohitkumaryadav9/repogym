@@ -17,14 +17,14 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from repogym import trajectory
+from repogym import accounting, trajectory
 from repogym.config import CANDIDATES_PATH, DATA_DIR, RELEASE_DIR, ROOT
 from repogym.env.budgets import Budgets
 from repogym.env.docker import image_id
 from repogym.env.environment import Environment, Observation, instructions, issue_text, now
 from repogym.env.history import distinctive_lines
 from repogym.env.sandbox import EnvSetupError
-from repogym.flags import compute, future_gold_lines
+from repogym.flags import Evidence, compute, future_gold_lines
 from repogym.grade import Grade, grade
 from repogym.release import ReleaseTask
 from repogym.validate import runnable_test_files
@@ -81,6 +81,33 @@ class EpisodeRecord(BaseModel):
     quota_ids_seen: list[str] = Field(default_factory=list)
     disk_written_mb: float | None = None  # writable layer at the end (setup included)
     peak_disk_mb: float | None = None
+    # Week 3: cell identity and provenance, a coarse outcome category, and accounting.
+    episode_key: str | None = None  # unique per experiment cell; names the trajectory file
+    experiment: dict | None = None  # cell, experiment/config hashes, model and strategy settings
+    error_type: str | None = None
+    termination: str | None = None  # submitted | step_cap | wallclock_cap | context_failure
+    #                                 | api_failure | harness_error
+    accounting: dict = Field(default_factory=dict)
+
+
+API_ERRORS = {"DailyQuotaExhausted", "ProviderUnavailable", "RequestRejected", "ModelUnavailable"}
+
+
+def termination_of(record: EpisodeRecord) -> str:
+    """The pre-registered termination category of an episode."""
+    if record.status in ("setup_error", "grade_error"):
+        return "harness_error"
+    if record.error_type == "ContextOverflow":
+        return "context_failure"
+    if record.error_type in API_ERRORS:
+        return "api_failure"
+    if record.error_type:
+        return "harness_error"
+    return {
+        "submitted": "submitted",
+        "budget:steps": "step_cap",
+        "budget:wall_clock": "wallclock_cap",
+    }.get(record.done_reason or "", "harness_error")
 
 
 @functools.cache
@@ -119,6 +146,8 @@ def run_episode(
     is_oracle: bool = False,
     grader: Callable = grade,
     api_tier: str | None = None,
+    episode_key: str | None = None,
+    experiment: dict | None = None,
 ) -> EpisodeRecord:
     manifest = json.loads((RELEASE_DIR / release / "manifest.json").read_text())
     commit, dirty = repogym_commit()
@@ -141,6 +170,8 @@ def run_episode(
         budgets=budgets,
         seed=seed,
         api_tier=api_tier,
+        episode_key=episode_key or task.task_id,
+        experiment=experiment,
     )
     if record.image_digest != manifest["docker_images"].get(env.spec.image):
         record.error = "image digest differs from the release manifest"
@@ -162,6 +193,7 @@ def run_episode(
             agent.run(env, first)
         except Exception as exc:  # noqa: BLE001 - an agent crash is recorded, then graded as-is
             record.error = f"agent error: {type(exc).__name__}: {exc}"[:2000]
+            record.error_type = type(exc).__name__
         state = env.state()
         record.done_reason = state.done_reason or ("agent_error" if record.error else None)
         record.steps = state.step_count
@@ -190,9 +222,20 @@ def run_episode(
     record.past_gold_lines_observed = sorted(
         {line for line in past for step in env.steps if line in step.observation}
     )
+    truncated = [s.step for s in env.steps if s.truncated]
+    if truncated:  # D14: a stored observation is no longer the full one; always visible
+        flags.stored_observation_truncated.append(Evidence(detail=f"steps {truncated[:20]}"))
     record.flags = {k: [e.model_dump() for e in v] for k, v in flags}
     record.flags_raised = flags.raised()
     record.tokens, record.cost_usd = _totals(env)
+    if any(s.metrics for s in env.steps) or env.events:
+        record.accounting = accounting.summarize(env.steps, env.events, agent.model_name)
+        record.tokens = {
+            "prompt": record.accounting["input_tokens"],
+            "completion": record.accounting["output_tokens"] + record.accounting["thinking_tokens"],
+        }
+        record.cost_usd = record.accounting["cost_usd"]
+    record.termination = termination_of(record)
     record.ended_at = now()
     doc = trajectory.build(
         episode_id=env.episode_id,
@@ -204,6 +247,7 @@ def run_episode(
         user_text=issue_text(task),
         started_at=env.state().started_at or record.started_at,
         steps=env.steps,
+        events=env.events,
         final_extra={
             "repogym": {
                 "reward": record.reward,
@@ -212,6 +256,8 @@ def run_episode(
                 "flags": record.flags,
                 "flags_raised": record.flags_raised,
                 "done_reason": record.done_reason,
+                "termination": record.termination,
+                "accounting": record.accounting,
             }
         },
         root_extra={
@@ -226,6 +272,8 @@ def run_episode(
                 "api_tier": api_tier,
                 "quota_ids_seen": record.quota_ids_seen,
                 "seed": seed,
+                "episode_key": record.episode_key,
+                "experiment": experiment,
             }
         },
         token_totals={
@@ -237,10 +285,11 @@ def run_episode(
     errors = trajectory.validate(doc)
     if errors:
         raise ValueError(f"ATIF validation failed for {task.task_id}: {errors[:5]}")
-    diff_path = run_dir / "diffs" / f"{task.task_id}.diff"
+    key = record.episode_key or task.task_id
+    diff_path = run_dir / "diffs" / f"{key}.diff"
     diff_path.parent.mkdir(parents=True, exist_ok=True)
     diff_path.write_text(work.diff, encoding="utf-8", errors="surrogateescape")
-    path = run_dir / "trajectories" / f"{task.task_id}.json"
+    path = run_dir / "trajectories" / f"{key}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=1, ensure_ascii=False))
     record.trajectory = str(path.relative_to(run_dir))
@@ -265,6 +314,7 @@ def _totals(env: Environment) -> tuple[dict[str, int | None], float | None]:
 
 def _finish(record: EpisodeRecord, run_dir: Path) -> EpisodeRecord:
     record.ended_at = record.ended_at or now()
+    record.termination = record.termination or termination_of(record)
     run_dir.mkdir(parents=True, exist_ok=True)
     with _write_lock, (run_dir / "episodes.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(record.model_dump_json() + "\n")

@@ -14,6 +14,16 @@ from repogym.env.environment import StepRecord
 from repogym.tools.definitions import openai_style
 
 SCHEMA_VERSION = "ATIF-v1.8"
+# RepoGym context events -> ATIF context_management (type, boundary). A summary is appended to
+# the pinned task message; masking, clipping and dropping prune older content.
+CONTEXT_TYPES = {
+    "summary": ("compaction", "append"),
+    "mask": ("pruning", "truncate"),
+    "clip": ("pruning", "truncate"),
+    "drop": ("pruning", "truncate"),
+    "fallback": ("pruning", "truncate"),
+    "overflow": ("overflow", "none"),
+}
 SOURCES = {"system", "user", "agent"}
 AGENT_ONLY = {"model_name", "reasoning_effort", "reasoning_content", "tool_calls", "metrics"}
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -41,6 +51,7 @@ def build(
     started_at: str,
     steps: list[StepRecord],
     final_extra: dict,
+    events: list | None = None,
     root_extra: dict,
     token_totals: dict | None = None,
 ) -> dict:
@@ -57,6 +68,31 @@ def build(
         {"step_id": 1, "timestamp": started_at, "source": "system", "message": system_text},
         {"step_id": 2, "timestamp": started_at, "source": "user", "message": user_text},
     ]
+    pending = sorted(events or [], key=lambda e: e.after_step)
+
+    def flush(upto: int) -> None:
+        """Context events as ATIF system steps (RFC convention: extra.context_management)."""
+        while pending and pending[0].after_step <= upto:
+            event = pending.pop(0)
+            kind = CONTEXT_TYPES.get(event.kind, ("other", "none"))
+            out_steps.append(
+                {
+                    "step_id": len(out_steps) + 1,
+                    "timestamp": event.at,
+                    "source": "system",
+                    "message": event.message,
+                    "extra": {
+                        "context_management": {"type": kind[0], "boundary": kind[1]},
+                        "repogym": {
+                            "event": event.kind,
+                            "detail": event.detail,
+                            "metrics": event.metrics,
+                        },
+                    },
+                }
+            )
+
+    flush(0)
     for record in steps:
         step: dict[str, Any] = {
             "step_id": len(out_steps) + 1,
@@ -94,9 +130,11 @@ def build(
         if record.metrics:
             step["metrics"] = record.metrics
             step["llm_call_count"] = record.llm_calls or 1
-        else:
-            step["llm_call_count"] = 0
+        else:  # a scripted dispatch, or an LLM reply that couldn't be used (no usage kept)
+            step["llm_call_count"] = record.llm_calls if record.tool is None else 0
         out_steps.append(step)
+        flush(record.step)
+    flush(10**9)
     final: dict[str, Any] = {"total_steps": len(out_steps), "extra": final_extra}
     for key, value in (token_totals or {}).items():
         if value is not None:

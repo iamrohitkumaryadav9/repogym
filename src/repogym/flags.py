@@ -63,6 +63,8 @@ class Flags(BaseModel):
     budget_exhausted: list[Evidence] = Field(default_factory=list)
     gold_content_in_observations: list[Evidence] = Field(default_factory=list)
     source_references_test_harness: list[Evidence] = Field(default_factory=list)
+    # D14: the environment's storage cap truncated a stored observation (full one lost).
+    stored_observation_truncated: list[Evidence] = Field(default_factory=list)
 
     def raised(self) -> list[str]:
         return [name for name, value in self if value]

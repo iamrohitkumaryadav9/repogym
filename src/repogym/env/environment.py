@@ -74,6 +74,18 @@ class StepRecord(BaseModel):
     llm_calls: int = 0
 
 
+class EventRecord(BaseModel):
+    """Something the agent's harness did that isn't a tool call: a context-management event
+    (clip, mask, summary, drop, fallback). Events never count against the step budget."""
+
+    after_step: int  # the number of steps taken when it happened
+    at: str
+    kind: str
+    detail: dict = Field(default_factory=dict)
+    message: str = ""  # e.g. the summary text
+    metrics: dict | None = None  # an LLM call's usage, for summary events
+
+
 class EpisodeState(BaseModel):
     episode_id: str
     task_id: str
@@ -174,6 +186,7 @@ class Environment:
             episode_id=self.episode_id, task_id=task.task_id, budgets=self.budgets
         )
         self.steps: list[StepRecord] = []
+        self.events: list[EventRecord] = []
         self.sandbox: Sandbox | None = None
         self.setup_report: SetupReport | None = None
         self._t0 = 0.0
@@ -312,6 +325,21 @@ class Environment:
         if exhausted := self._exhausted(after_step=True):
             self._state.done, self._state.done_reason = True, f"budget:{exhausted}"
         return self._state.done, self._state.done_reason
+
+    def record_event(
+        self, kind: str, detail: dict | None = None, message: str = "", metrics: dict | None = None
+    ) -> None:
+        """Record a context event. It is not a step and doesn't touch the sandbox."""
+        self.events.append(
+            EventRecord(
+                after_step=self._state.step_count,
+                at=now(),
+                kind=kind,
+                detail=detail or {},
+                message=message,
+                metrics=metrics,
+            )
+        )
 
     def close(self) -> None:
         if self.sandbox is not None:
