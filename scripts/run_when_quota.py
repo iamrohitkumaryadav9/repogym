@@ -1,13 +1,13 @@
-"""Start an experiment for one model once (a) another experiment's episodes for that model are
-recorded and (b) the model has enough of today's quota left; otherwise wait for its reset.
+"""Start an experiment for one model once (a) another experiment's cells for that model are all
+done and (b) the model has at least ``--need`` requests of today's quota left (default 0: start
+at once, and let the runner hold an episode across the reset if the quota runs out, D16).
 
 Our local ledger is the source of truth for our own requests (D20). Decisions are printed with
 timestamps, so the log shows exactly when and why the run started. Usage:
 
     uv run python scripts/run_when_quota.py \
         --experiment configs/experiments/flash_thinking_high.yaml \
-        --model gemini-3.5-flash-lite --need 240 \
-        --after configs/experiments/repilot.yaml --after-records 3
+        --model gemini-3.5-flash-lite --after configs/experiments/repilot.yaml
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from repogym.config import ROOT
 from repogym.experiments import spec
-from repogym.experiments.runner import LEDGER_PATH, latest_records
+from repogym.experiments.runner import LEDGER_PATH, cell_done, latest_records
 from repogym.ratelimit import LimitsConfig, QuotaLedger
 
 
@@ -28,19 +28,17 @@ def say(message: str) -> None:
     print(f"{datetime.now(UTC).isoformat(timespec='seconds')} {message}", flush=True)
 
 
-def recorded(experiment: spec.Experiment, model: str) -> int:
-    return sum(
-        len(v) for k, v in latest_records(experiment.run_dir).items() if k.startswith(f"{model}__")
-    )
+def all_done(experiment: spec.Experiment, model: str) -> bool:
+    records = latest_records(experiment.run_dir)
+    return all(cell_done(records.get(c.key, [])) for c in experiment.cells() if c.model == model)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment", type=Path, required=True)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--need", type=int, required=True, help="requests the run may need")
-    parser.add_argument("--after", type=Path, help="experiment that must finish first")
-    parser.add_argument("--after-records", type=int, default=0)
+    parser.add_argument("--need", type=int, default=0, help="requests that must be left today")
+    parser.add_argument("--after", type=Path, help="experiment whose cells must finish first")
     parser.add_argument("--poll", type=float, default=300.0)
     args = parser.parse_args()
     experiment = spec.load(args.experiment)
@@ -49,9 +47,9 @@ def main() -> None:
     rpd = limits.effective(args.model)["rpd"]
     if args.after:
         before = spec.load(args.after)
-        while recorded(before, args.model) < args.after_records:
+        while not all_done(before, args.model):
             time.sleep(args.poll)
-        say(f"{before.name}: {args.model} has {recorded(before, args.model)} records; go on")
+        say(f"{before.name}: all {args.model} cells are done; go on")
     while True:
         now = time.time()
         used = ledger.requests(args.model, now)
