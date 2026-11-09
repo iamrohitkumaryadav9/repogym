@@ -456,3 +456,21 @@ def test_replayed_thinking_is_counted_exactly_in_the_estimate():
     raw = est.raw("s", [], [thinking])
     est.observe(raw, est.estimate("s", [], [thinking]), int(raw) + 800, replay=800)
     assert est.factor == pytest.approx(1.0, abs=0.02)
+
+
+def test_preserved_thinking_share_of_prompt_and_budget():
+    calls = [
+        {"prompt_tokens": 1000, "budget": 12000, "view": {"replay_tokens": 0}},
+        {"prompt_tokens": 4000, "budget": 12000, "view": {"replay_tokens": 1000}},
+        {"prompt_tokens": 12000, "budget": 12000, "view": {"replay_tokens": 6000}},
+        {"prompt_tokens": None, "budget": 12000, "view": {"replay_tokens": 5}},  # skipped
+    ]
+    out = accounting.preserved_thinking(calls)
+    assert out["calls"] == 3 and out["calls_with_thinking"] == 2
+    assert out["share_of_prompt"] == {"mean": 0.25, "median": 0.25, "max": 0.5}
+    assert out["share_of_budget"]["max"] == 0.5 and out["tokens"]["max"] == 6000
+    assert accounting.preserved_thinking([]) == {"calls": 0}
+    env = run(agent([reply(("submit", {}))]))
+    acct = accounting.summarize(env.steps, env.events, "gemma-4-26b-a4b-it")
+    assert acct["preserved_thinking"]["calls"] == 1
+    assert acct["preserved_thinking"]["share_of_prompt"]["max"] == 0.0

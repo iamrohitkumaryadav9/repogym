@@ -503,4 +503,61 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     the setup, not hidden.
   * Lowering Gemma's thinking level (`minimal` is accepted) would free budget, but it changes a
     pinned vendor default (D10). It is not proposed.
+* *Amended 2026-11-09 (Gate 1 decision): reported as a finding.*
+  * The analysis measures the share of each prompt, and of B, taken by preserved thinking, per
+    episode and per strategy. The source is `view.replay_tokens` against the reported
+    `prompt_tokens` and B on every call: `accounting.preserved_thinking`, which also works
+    after the fact from stored trajectories.
+  * RESULTS.md reports it as a finding: **the cost of following vendor guidance under a hard
+    budget**. The drop-the-thoughts measurement above (3,139 → 631 billed tokens for the same
+    call) is cited as evidence of what is at stake.
+  * The Gemma thinking page is even more explicit than the model card
+    (https://ai.google.dev/gemma/docs/capabilities/thinking, checked 2026-11-09): "If a single
+    model turn involves function or tool calls, thoughts must NOT be removed between the
+    function calls."
+
+## D22. Every model runs at its vendor-recommended thinking setting for coding tasks
+
+*Decided 2026-11-09 (operator, Gate 1).*
+
+* **Principle.** Each model uses the thinking setting its vendor recommends for coding tasks.
+  Where the vendor documents none, it uses the API default. Settings are pinned in
+  `configs/models.yaml`, recorded in every episode, and frozen before E3.
+* **gemini-3.5-flash-lite: `high`.**
+  * Gemini thinking docs (https://aistudio.google.com/docs/thinking.md?generate-content=true,
+    checked 2026-11-09):
+    * "Hard Tasks… such as solving complex math problems or coding tasks, we recommend setting
+      a high thinking budget";
+    * `minimal` is described as for "chat or high throughput applications" and "may think very
+      minimally for complex coding tasks";
+    * `thinkingLevel` is "recommended for Gemini 3 models";
+    * Flash-Lite supports `minimal` (its default), `low`, `medium` and `high`.
+  * `high` was accepted when probed (D10).
+* **gemma-4-26b-a4b-it, gemma-4-31b-it: thinking on, at the API default (no level set).**
+  * The Gemma 4 model card's best practices
+    (https://ai.google.dev/gemma/docs/core/model_card_4, checked 2026-11-09) give the sampling
+    settings and how to turn thinking mode on. They don't give a thinking level for coding or
+    any other task type.
+  * The Gemini thinking-level table doesn't list Gemma.
+  * Thinking mode is the documented reasoning capability ("think step-by-step before
+    answering"), and the Gemini API enables it by default for Gemma: measured, gemma-4-26b
+    thinks unless told otherwise.
+  * So the principle keeps the API default. That is also what D10 pinned. No change.
+* **Condition: E3 is not the first run with Flash-Lite at `high`.**
+  * The first pilot ran Flash-Lite at `minimal`. The re-pilot's Flash-Lite episodes stay at
+    `minimal`, so the re-pilot isolates the agent fixes (D19).
+  * After them comes a short check at `high`:
+    * `configs/experiments/flash_thinking_high.yaml`;
+    * the same 3 dev tasks, for a paired comparison;
+    * tagged `pilot` and excluded from analysis;
+    * set through `model_overrides`, which is hashed and recorded;
+    * scheduled within Flash-Lite's daily quota by `scripts/run_when_quota.py`.
+  * It reports reward, steps, latency per call, output and thinking tokens per call, any
+    tool-calling or thought-signature problems, and requests used. That confirms `high` fits
+    the daily quota and the active-time cap.
+  * `configs/models.yaml` changes to `high` only after the check is reviewed, before the freeze.
+* **Consequences.**
+  * Flash-Lite's thinking costs output tokens and latency, but no RPD or TPM; TPM counts input.
+  * If Flash-Lite turns out to replay thinking the way Gemma does, the D21 accounting
+    covers it. The check will show it either way.
 

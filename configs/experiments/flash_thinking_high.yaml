@@ -1,0 +1,32 @@
+# Check of Flash-Lite at thinking_level: high before E3 uses it (D22). Same 3 dev tasks as the
+# re-pilot's Flash-Lite episodes (which run at the pinned `minimal`), for a paired comparison.
+# Dev tasks only; tagged pilot in provenance; excluded from every later analysis.
+# Scheduled within Flash-Lite's daily quota (scripts/run_when_quota.py).
+name: week3-flash-thinking-high
+kind: pilot
+split: dev
+release: v0.1
+tasks:
+  - python-attrs__attrs-1448
+  - python-poetry__tomlkit-536
+  - pallets__click-3504
+models:
+  - gemini-3.5-flash-lite
+model_overrides:
+  gemini-3.5-flash-lite:
+    thinking_level: high
+strategies: [obs_mask]
+repeats: 1
+context:
+  budget: 12000
+  clip_tokens: 2000
+  keep_observations: 5
+  keep_recent_units: 4
+  summary_trigger: 0.8
+  summary_max_tokens: 1000
+budgets:
+  max_steps: 75
+  max_wall_seconds: 3600  # active time only (D17)
+  max_elapsed_seconds: 21600
+  max_observation_chars: 200000
+  max_total_observation_chars: 20000000

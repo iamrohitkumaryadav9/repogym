@@ -36,6 +36,40 @@ def _sum(calls: list[dict], key: str) -> int:
     return sum(c.get(key) or 0 for c in calls)
 
 
+def preserved_thinking(agent_calls: list[dict]) -> dict:
+    """How much of each prompt, and of B, was the model's own preserved thinking (D21).
+
+    Per agent call: the exact re-billed thinking in the view (``view.replay_tokens``) as a share
+    of the reported prompt and of the budget. Works on stored per-call records, so it can be
+    computed after the fact from any trajectory.
+    """
+    rows = []
+    for c in agent_calls:
+        replay = (c.get("view") or {}).get("replay_tokens")
+        prompt, budget = c.get("prompt_tokens"), c.get("budget")
+        if replay is None or not prompt or not budget:
+            continue
+        rows.append((replay, replay / prompt, replay / budget))
+    if not rows:
+        return {"calls": 0}
+
+    def stats(i: int) -> dict:
+        values = sorted(r[i] for r in rows)
+        return {
+            "mean": round(sum(values) / len(values), 4),
+            "median": round(values[len(values) // 2], 4),
+            "max": round(values[-1], 4),
+        }
+
+    return {
+        "calls": len(rows),
+        "calls_with_thinking": sum(r[0] > 0 for r in rows),
+        "tokens": {k: int(v) for k, v in stats(0).items()},
+        "share_of_prompt": stats(1),
+        "share_of_budget": stats(2),
+    }
+
+
 def summarize(steps, events, model: str | None, prices: dict | None = None) -> dict:
     """Totals over every LLM call in an episode: agent calls (on steps) and summary calls
     (on events). Summary overhead is reported separately as well."""
@@ -91,6 +125,8 @@ def summarize(steps, events, model: str | None, prices: dict | None = None) -> d
         **totals(calls),
         "summary_overhead": totals(summary_calls),
         "budget_violations": sum(bool(c.get("budget_violation")) for c in agent_calls),
+        # The model's own preserved thinking as a share of each prompt and of B (D21, D22).
+        "preserved_thinking": preserved_thinking(agent_calls),
         # Prompts that had to leave the stored summary out to fit B (D18); a validity signal.
         "summary_omitted": omitted,
         "summary_omitted_rate": round(omitted / len(agent_calls), 4) if agent_calls else None,

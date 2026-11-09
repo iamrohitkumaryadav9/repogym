@@ -414,3 +414,14 @@ def test_the_repilot_is_dev_only_on_new_tasks(tmp_path):
     assert second.kind == "pilot" and second.split == "dev" and len(second.cells()) == 6
     assert not set(first.task_ids) & set(second.task_ids)
     check(second, tmp_path / "none.md", tmp_path, final=False)
+
+
+def test_model_overrides_change_only_that_experiment_and_are_hashed(tmp_path):
+    root = Path(__file__).parents[1] / "configs" / "experiments"
+    high, repilot = load(root / "flash_thinking_high.yaml"), load(root / "repilot.yaml")
+    assert high.model_settings["gemini-3.5-flash-lite"]["thinking_level"] == "high"
+    assert repilot.model_settings["gemini-3.5-flash-lite"]["thinking_level"] == "minimal"
+    assert high.kind == "pilot" and set(high.task_ids) == set(repilot.task_ids)
+    assert high.resolved()["model_settings"]["gemini-3.5-flash-lite"]["thinking_level"] == "high"
+    with pytest.raises(ExperimentError, match="model_overrides for models not in"):
+        write_exp(tmp_path, model_overrides={"gemma-4-31b-it": {"thinking_level": "high"}})
