@@ -292,6 +292,46 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
   `harness_error` is excluded from success rates and listed separately. Pilot records
   (`experiment.pilot = true`) are excluded from all later analysis.
 
+* *Amended 2026-11-09, 15:37 UTC (operator decision): server errors and daily quota pause
+  the call in place.*
+  * **Evidence.** Gemma 26B's attempts failed with 5xx at 15 of 90 (17%) in the morning pilot.
+    In the re-pilot's first attrs-1448 episode (about 13:30–13:41 UTC) the rate was **13 of
+    22**: one call failed its 6 attempts within a few minutes, and the episode died at step 9.
+  * **By UTC hour** (`scripts/reliability_by_hour.py`): 26B 14% at 11:00, 22% at 12:00, 47% at
+    13:00, 46% at 14:00, 28% at 15:00; 31B 55–100% in every hour; Flash-Lite 0 of 225. Six
+    consecutive 500s within minutes is a transient server problem, not an episode failure, and
+    it used up the limited attempts per cell.
+  * **5xx and transport errors** (not 429, not other 4xx) are retried **in place**: the
+    episode, its sandbox and its state are kept.
+    * Backoff is exponential with ±50% jitter, from **30 s**, capped at **600 s** between tries.
+    * The call is declared failed (`ProviderUnavailable` → `api_failure`) only after **20
+      consecutive failures or 60 minutes** since its first failure, whichever comes first.
+    * With these values the 60-minute limit always comes first, after about 10–11 failures:
+      the cumulative backoff passes 3,600 s by then. The 20-failure limit only binds if the
+      backoff values are lowered.
+    * The waiting is excluded from active time (D17), and the 6-hour elapsed cap still bounds
+      it.
+  * **Daily quota.** When the limiter finds the day's quota used up, or a 429 names a per-day
+    quota, the call is **held in place until the reset plus 60 s** (at most once per call),
+    then retried.
+    * The episode keeps its sandbox and state. The container runs `sleep infinity`, so only a
+      Docker restart could end it.
+    * The hold is excluded from active time and also from the 6-hour elapsed cap, because it's
+      a known, scheduled wait, not a hang. It is recorded as `quota_pause` in
+      `episode_seconds`.
+    * The runner's between-episode reset sleep remains only as a fallback.
+  * **Pre-registered and configurable.** The values above are the experiment's `retry`
+    section (`server_base_delay`, `server_max_delay`, `server_max_failures`,
+    `server_max_seconds`, `pause_on_daily`, `max_daily_pauses`, `reset_margin`). They are part
+    of the resolved config and its hash, the frozen keys, and each episode's provenance.
+  * **Every attempt is logged** to `data/quota/attempts-<UTC day>.jsonl` with its time, model,
+    status, kind and number within its call. It's the basis for error rates by hour, and for
+    scheduling runs around bad hours.
+  * **Applied from the 15:37 UTC restart of the re-pilot onward**, including tomlkit-536,
+    which restarted from scratch as attempt 1. It came too late for attrs-1448: all three of
+    its attempts ran under the old rule. Attempts 1 and 2 ended in `api_failure` at steps 9 and
+    34; attempt 3 submitted at step 41, unsolved. Its outcome stands as recorded.
+
 ## D17. Episode limits: 75 steps; the wall-clock cap counts active time only
 
 * **Context.**
