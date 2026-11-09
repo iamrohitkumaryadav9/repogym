@@ -1,0 +1,264 @@
+"""The function-calling agent, with a fake provider and a fake sandbox (no network, no Docker)."""
+
+import pytest
+
+from repogym import accounting, trajectory
+from repogym.agents.tool_agent import NO_TOOL_NUDGE, ToolAgent
+from repogym.context.base import ContextConfig, ContextOverflow
+from repogym.context.strategies import ContextManager
+from repogym.context.tokens import TokenEstimator
+from repogym.env.budgets import Budgets
+from repogym.env.environment import Observation
+from repogym.harness import EpisodeRecord, termination_of
+from repogym.providers.base import (
+    Attempt,
+    BadResponse,
+    DailyQuotaExhausted,
+    Generation,
+    Message,
+    ToolCall,
+    Usage,
+)
+from tests.test_episode import env_with
+
+
+def reply(*calls, text="thinking"):
+    tool_calls = [ToolCall(id=f"id{i}", name=n, args=a) for i, (n, a) in enumerate(calls)]
+    return Message(
+        role="assistant",
+        text=text,
+        calls=tool_calls,
+        raw={"role": "model", "parts": [{"text": text}]},
+        provider="fake",
+    )
+
+
+class FakeProvider:
+    def __init__(self, script, name="gemma-4-26b-a4b-it"):
+        self.script, self.name, self.seen, self.summaries = list(script), name, [], []
+
+    def generate(self, system, messages, tools, estimated_tokens=0):
+        self.seen.append([m.copy() for m in messages])
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return Generation(
+            message=item,
+            usage=Usage(
+                prompt_tokens=1200,
+                cached_tokens=200,
+                output_tokens=30,
+                thinking_tokens=70,
+                total_tokens=1300,
+            ),
+            finish_reason="STOP",
+            model_version=self.name,
+            latency_seconds=0.5,
+            http_status=200,
+            attempts=[Attempt(429, "rate_limited", 20.0, 20.0), Attempt(200, "ok")],
+        )
+
+    def generate_text(self, system, prompt, max_tokens, estimated_tokens=0):
+        self.summaries.append(prompt)
+        return Generation(
+            message=Message(role="assistant", text="SUMMARY"),
+            usage=Usage(prompt_tokens=500, output_tokens=50, thinking_tokens=0),
+            finish_reason="STOP",
+            model_version=self.name,
+            latency_seconds=0.2,
+            http_status=200,
+            attempts=[Attempt(200, "ok")],
+        )
+
+    def count_tokens(self, system, messages, tools):
+        return None
+
+
+class EnvFacade:
+    """Only the environment API. Any other attribute access fails the test."""
+
+    def __init__(self, env):
+        self._env = env
+
+    def step(self, action):
+        return self._env.step(action)
+
+    def note(self, *args, **kwargs):
+        return self._env.note(*args, **kwargs)
+
+    def state(self):
+        return self._env.state()
+
+    def record_event(self, *args, **kwargs):
+        return self._env.record_event(*args, **kwargs)
+
+
+def agent(script, strategy="obs_mask", budget=12_000, **kw):
+    cm = ContextManager(strategy, ContextConfig(budget=budget, **kw), TokenEstimator())
+    return ToolAgent(FakeProvider(script), cm)
+
+
+def run(tool_agent, budgets=None):
+    env = env_with(budgets or Budgets())
+    tool_agent.run(EnvFacade(env), Observation(text="Fix the issue: X is broken."))
+    return env
+
+
+def test_tool_calls_go_through_env_step_only_and_results_feed_the_next_prompt():
+    a = agent(
+        [
+            reply(("bash", {"command": "ls"})),
+            reply(("create_file", {"path": "a.py", "content": "x = 1\n"})),
+            reply(("submit", {})),
+        ]
+    )
+    env = run(a)
+    assert [s.tool for s in env.steps] == ["bash", "create_file", "submit"]
+    assert env.state().done_reason == "submitted"
+    second_prompt = a.provider.seen[1]
+    assert (
+        second_prompt[0].text == "Fix the issue: X is broken." and second_prompt[-1].role == "tool"
+    )
+    assert second_prompt[-1].results[0].call_id == "id0"
+
+
+def test_parallel_calls_are_separate_steps_with_metrics_on_the_first_only():
+    env = run(
+        agent(
+            [reply(("bash", {"command": "a"}), ("bash", {"command": "b"})), reply(("submit", {}))]
+        )
+    )
+    first, second = env.steps[0], env.steps[1]
+    assert (
+        first.metrics and first.llm_calls == 1 and second.metrics is None and second.llm_calls == 0
+    )
+    extra = first.metrics["extra"]["repogym"]
+    assert first.metrics["completion_tokens"] == 100  # output + thinking (ATIF semantics)
+    assert extra["rate_limited"] == 1 and extra["retries"] == 1 and extra["budget"] == 12_000
+    assert extra["view"]["units"] == {} and extra["budget_violation"] is False
+
+
+def test_no_tool_reply_is_a_counted_nudge_and_bad_response_is_never_acted_on():
+    a = agent(
+        [
+            reply(text="I think the bug is in x."),
+            BadResponse("finish_reason MAX_TOKENS"),
+            reply(("submit", {})),
+        ]
+    )
+    env = run(a)
+    assert [s.tool for s in env.steps] == [None, None, "submit"]
+    assert env.steps[0].observation == NO_TOOL_NUDGE and "MAX_TOKENS" in env.steps[1].observation
+    assert a.provider.seen[1][-1].text == NO_TOOL_NUDGE  # the nudge is in the history
+    assert len(a.provider.seen[2]) == len(a.provider.seen[1])  # the bad reply added nothing
+
+
+def test_budget_violation_is_flagged_when_reported_tokens_exceed_b():
+    # The estimate (~1,086) fits B=1,100, but the API reports 1,200 prompt tokens: a violation.
+    env = run(agent([reply(("submit", {}))], budget=1_100))
+    assert env.steps[0].metrics["extra"]["repogym"]["budget_violation"] is True
+
+
+def test_summary_calls_are_recorded_as_events_with_their_metrics():
+    big = "y" * 9_000
+    script = [reply(("bash", {"command": f"cat f{i}"})) for i in range(6)] + [reply(("submit", {}))]
+    a = agent(script, strategy="llm_summary", budget=6_000, keep_recent_units=2)
+    env = env_with(Budgets())
+    env.sandbox.output = big
+    a.run(EnvFacade(env), Observation(text="task"))
+    summaries = [e for e in env.events if e.kind == "summary"]
+    assert (
+        summaries
+        and summaries[0].message == "SUMMARY"
+        and summaries[0].metrics["prompt_tokens"] == 500
+    )
+    assert a.provider.summaries and "Result of bash" in a.provider.summaries[0]
+    acct = accounting.summarize(env.steps, env.events, a.model_name)
+    assert acct["summary_overhead"]["calls"] == len(summaries) and acct["cost_usd"] is None  # Gemma
+
+
+def test_context_overflow_and_quota_errors_map_to_terminations():
+    with pytest.raises(ContextOverflow):
+        run(agent([reply(("submit", {}))], budget=100))
+    with pytest.raises(DailyQuotaExhausted):
+        run(agent([DailyQuotaExhausted("daily")]))
+    base = dict(
+        run_id="r",
+        episode_id="e",
+        task_id="t",
+        agent="a",
+        agent_version="1",
+        status="agent_error",
+        started_at="x",
+        release="v0.1",
+        tasks_sha256="s",
+        image="i",
+        image_digest="d",
+        repogym_commit="c",
+        repogym_dirty=False,
+        budgets=Budgets(),
+    )
+    assert termination_of(EpisodeRecord(**base, error_type="ContextOverflow")) == "context_failure"
+    assert termination_of(EpisodeRecord(**base, error_type="DailyQuotaExhausted")) == "api_failure"
+    assert termination_of(EpisodeRecord(**base, error_type="KeyError")) == "harness_error"
+    graded = {**base, "status": "graded"}
+    assert termination_of(EpisodeRecord(**graded, done_reason="submitted")) == "submitted"
+    assert termination_of(EpisodeRecord(**graded, done_reason="budget:steps")) == "step_cap"
+    assert (
+        termination_of(EpisodeRecord(**graded, done_reason="budget:wall_clock")) == "wallclock_cap"
+    )
+    assert termination_of(EpisodeRecord(**graded, done_reason="budget:disk")) == "harness_error"
+    assert termination_of(EpisodeRecord(**{**base, "status": "setup_error"})) == "harness_error"
+
+
+def test_flash_lite_cost_uses_list_prices():
+    a = agent([reply(("submit", {}))])
+    a.provider.name = "gemini-3.5-flash-lite"
+    env = run(a)
+    acct = accounting.summarize(env.steps, env.events, "gemini-3.5-flash-lite")
+    # (1200-200)*0.30 + 200*0.03 + (30+70)*2.50, per million tokens
+    assert acct["cost_usd"] == pytest.approx((1000 * 0.30 + 200 * 0.03 + 100 * 2.50) / 1e6)
+    assert acct["input_tokens"] == 1200 and acct["thinking_tokens"] == 70 and acct["requests"] == 2
+
+
+def test_trajectory_with_context_events_is_valid_atif():
+    a = agent(
+        [reply(("bash", {"command": "cat big"})), reply(("submit", {}))],
+        budget=12_000,
+        clip_tokens=200,
+    )
+    env = env_with(Budgets())
+    env.sandbox.output = "z" * 20_000
+    a.run(EnvFacade(env), Observation(text="task"))
+    assert any(e.kind == "clip" for e in env.events)
+    doc = trajectory.build(
+        episode_id="e",
+        session_id="s",
+        agent_name=a.name,
+        agent_version="1",
+        model_name=a.model_name,
+        system_text="sys",
+        user_text="task",
+        started_at="2026-11-09T00:00:00Z",
+        steps=env.steps,
+        events=env.events,
+        final_extra={},
+        root_extra={},
+    )
+    assert trajectory.validate(doc) == []
+    system_steps = [s for s in doc["steps"] if s["source"] == "system"][1:]
+    assert system_steps[0]["extra"]["context_management"] == {
+        "type": "pruning",
+        "boundary": "truncate",
+    }
+
+
+def test_history_keeps_full_observations_even_when_the_prompt_clips_them():
+    a = agent([reply(("bash", {"command": "cat big"})), reply(("submit", {}))], clip_tokens=200)
+    # Week 3 budgets: the environment's storage cap is far above the prompt clip (D14).
+    env = env_with(Budgets(max_observation_chars=200_000))
+    env.sandbox.output = "w" * 20_000
+    a.run(EnvFacade(env), Observation(text="task"))
+    assert "w" * 20_000 in env.steps[0].observation  # stored in full (D14)
+    shown = a.provider.seen[1][-1].results[0].output
+    assert "clipped by RepoGym" in shown and len(shown) < 2_000  # the model saw a clip

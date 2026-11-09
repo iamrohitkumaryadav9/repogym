@@ -43,8 +43,6 @@ class ContextManager:
     ) -> None:
         if strategy not in STRATEGIES:
             raise ValueError(f"unknown strategy {strategy!r}; choose from {STRATEGIES}")
-        if strategy in ("llm_summary", "hybrid") and summarizer is None:
-            raise ValueError(f"{strategy} needs a summarizer")
         self.strategy, self.config, self.estimator = strategy, config, estimator
         self.summarizer = summarizer
         self.counter = counter  # optional exact count (countTokens), used to verify the fit
@@ -140,6 +138,8 @@ class ContextManager:
 
     def build(self, system: str, tools: list[dict], history: list[Message]) -> PromptView:
         cfg = self.config
+        if self.strategy in ("llm_summary", "hybrid") and self.summarizer is None:
+            raise ValueError(f"{self.strategy} needs a summarizer")
         task, units = split_units(history)
         rendered, clipped = self._clipped(units)
         states = {u.index: "full" for u in units}
