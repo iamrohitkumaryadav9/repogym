@@ -12,6 +12,7 @@ from repogym.providers.base import (
     Message,
     ProviderUnavailable,
     RequestRejected,
+    ToolCall,
     ToolResult,
 )
 from repogym.providers.gemini import GeminiProvider, GeminiSettings, from_content, to_contents
@@ -328,3 +329,66 @@ def test_signature_bytes_survive_json_storage():
     assert to_contents([restored])[0].parts[0].thought_signature == SIG
     stored = message.raw["parts"][0]["thought_signature"]  # the SDK stores URL-safe base64
     assert base64.urlsafe_b64decode(stored + "=" * (-len(stored) % 4)) == SIG
+
+
+# -- D17 waits and D13 countTokens -----------------------------------------------------------
+
+
+class WaitingLimiter(RecordingLimiter):
+    def acquire(self, estimated_tokens):
+        super().acquire(estimated_tokens)
+        return 7.5  # held this long by the rate limiter
+
+
+def test_limiter_waits_and_backoff_are_reported_separately_from_api_time():
+    sleeps = []
+    p = provider([rate_limited("20s"), response([types.Part(text="ok")])], sleeps, WaitingLimiter())
+    g = p.generate("s", [Message(role="user", text="t")], TOOLS)
+    assert g.limiter_wait_seconds == 15.0  # two attempts, 7.5 s each
+    assert g.backoff_seconds == pytest.approx(sleeps[0]) and g.backoff_seconds >= 20
+    assert g.wait_seconds == pytest.approx(15.0 + sleeps[0])
+    assert g.latency_seconds >= 0.0  # fake sleeps take no real time, so API time is ~0
+
+
+def test_bad_response_carries_its_waits():
+    p = provider([response([types.Part(text="x")], finish="SAFETY")], limiter=WaitingLimiter())
+    with pytest.raises(BadResponse) as exc:
+        p.generate("s", [Message(role="user", text="t")], TOOLS)
+    assert exc.value.wait_seconds == 7.5
+
+
+class FakeHttp:
+    def __init__(self, status=200, payload=None):
+        self.status, self.payload, self.posts = status, payload or {"totalTokens": 505}, []
+
+    def post(self, url, headers, json):
+        self.posts.append((url, headers, json))
+        status, payload = self.status, self.payload
+        return type("R", (), {"status_code": status, "json": lambda self: payload})()
+
+
+def test_count_tokens_counts_the_whole_request_via_generate_content_request():
+    http = FakeHttp()
+    p = provider([])
+    p._http = http
+    reply = Message(
+        role="assistant",
+        calls=[ToolCall(id="c1", name="bash", args={"command": "ls"})],
+        provider="gemini",
+        raw=response([call_part()])
+        .candidates[0]
+        .content.model_dump(mode="json", exclude_none=True),
+    )
+    history = [Message(role="user", text="task"), reply]
+    assert p.count_tokens("system text", history, TOOLS) == 505
+    url, headers, body = http.posts[0]
+    assert url.endswith("/gemma-4-26b-a4b-it:countTokens") and headers["x-goog-api-key"] == "unused"
+    request = body["generateContentRequest"]
+    assert set(body) == {"generateContentRequest"}  # never contents + request together
+    assert request["systemInstruction"]["parts"][0]["text"] == "system text"
+    assert request["tools"][0]["functionDeclarations"]
+    assert "thoughtSignature" in request["contents"][1]["parts"][0]  # counted as sent
+    p._http = FakeHttp(status=400)
+    assert p.count_tokens("s", history, TOOLS) is None  # the estimator is the fallback
+    foreign = Message(role="assistant", text="x", raw={"x": 1}, provider="openai")
+    assert p.count_tokens("s", [history[0], foreign], TOOLS) is None  # never raises

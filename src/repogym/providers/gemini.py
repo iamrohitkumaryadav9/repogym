@@ -22,6 +22,7 @@ from repogym.providers.base import (
 from repogym.providers.retry import Outcome, RetryPolicy, run_with_retries
 
 PROVIDER = "gemini"
+COUNT_TOKENS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OK_FINISH = {"STOP"}
 
 
@@ -140,6 +141,7 @@ class GeminiProvider:
         policy: RetryPolicy | None = None,
         client=None,
         sleep=time.sleep,
+        http=None,
     ) -> None:
         from google import genai
         from google.genai import types
@@ -153,6 +155,8 @@ class GeminiProvider:
         self.limiter = limiter or NullLimiter()
         self.policy = policy or RetryPolicy()
         self._sleep = sleep
+        self._api_key = api_key  # used only in request headers; never logged
+        self._http = http  # httpx-like client for countTokens; created on first use
 
     def _config(self, system: str, tools: list[dict]):
         from google.genai import types
@@ -286,17 +290,37 @@ class GeminiProvider:
         )
 
     def count_tokens(self, system: str, messages: list[Message], tools: list[dict]) -> int | None:
-        """Exact prompt tokens via countTokens (not counted against RPM/TPM, D13)."""
-        from google.genai import types
+        """Exact prompt tokens via countTokens (not counted against RPM/TPM, D13).
 
+        The whole request (system instruction, tools, contents) must be counted. The SDK's
+        ``count_tokens`` refuses ``system_instruction`` in Developer API mode, so this posts a
+        ``generateContentRequest`` to the REST method directly (verified within one token of
+        the reported prompt_tokens; D13). Returns None on any error: the estimator is the
+        fallback.
+        """
+        import httpx
+
+        def dump(obj) -> dict:
+            return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+        if self._http is None:
+            self._http = httpx.Client(timeout=60)
         try:
-            result = self.client.models.count_tokens(
-                model=self.settings.model,
-                contents=to_contents(messages),
-                config=types.CountTokensConfig(
-                    system_instruction=system, tools=tool_declarations(tools)
-                ),
+            body = {
+                "generateContentRequest": {
+                    "model": f"models/{self.settings.model}",
+                    "contents": [dump(c) for c in to_contents(messages)],
+                    "systemInstruction": {"parts": [{"text": system}]},
+                    "tools": [dump(t) for t in tool_declarations(tools)],
+                }
+            }
+            response = self._http.post(
+                f"{COUNT_TOKENS_URL}/{self.settings.model}:countTokens",
+                headers={"x-goog-api-key": self._api_key},
+                json=body,
             )
-        except Exception:  # noqa: BLE001 - the estimator is the fallback
+            if response.status_code != 200:
+                return None
+            return int(response.json()["totalTokens"])
+        except (httpx.HTTPError, KeyError, ValueError, TypeError):
             return None
-        return result.total_tokens
