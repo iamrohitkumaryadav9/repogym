@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path("/home/rohit/repogym")
+ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / "data/runs/week3-pilot"
 TASKS = {
     json.loads(l)["task_id"]: json.loads(l)
