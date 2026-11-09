@@ -1,4 +1,7 @@
-"""Unit tests never touch the network: any TCP/UDP connection attempt fails the test."""
+"""Unit tests never touch the network: any TCP/UDP connection attempt fails the test.
+
+Only tests marked ``live`` (manual, never in CI; they call the Gemini API) are exempt.
+"""
 
 import socket
 
@@ -10,7 +13,9 @@ class NetworkBlocked(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch):
+def _no_network(monkeypatch, request):
+    if request.node.get_closest_marker("live"):
+        return
     real_connect = socket.socket.connect
 
     def guarded(self, address):
