@@ -392,3 +392,13 @@ def test_count_tokens_counts_the_whole_request_via_generate_content_request():
     assert p.count_tokens("s", history, TOOLS) is None  # the estimator is the fallback
     foreign = Message(role="assistant", text="x", raw={"x": 1}, provider="openai")
     assert p.count_tokens("s", [history[0], foreign], TOOLS) is None  # never raises
+
+
+def test_replies_with_thought_text_carry_their_replay_cost():
+    """Gemma returns its thinking as a thought part, billed twice when replayed (D21)."""
+    thought = types.Part(text="let me think", thought=True)
+    p = provider([response([thought, call_part()], thoughts=120), response([call_part()])])
+    g = p.generate("s", [Message(role="user", text="t")], TOOLS)
+    assert g.message.replay_tokens == 240 and "let me think" not in g.message.text
+    plain = p.generate("s", [Message(role="user", text="t")], TOOLS)
+    assert plain.message.replay_tokens == 0  # no thought part: nothing extra is replayed

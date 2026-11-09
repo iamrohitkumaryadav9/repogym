@@ -65,6 +65,7 @@ class PromptView:
     summary_covers: int = 0  # units 1..summary_covers are represented by the summary
     over_budget: bool = False  # True only if even the minimal view doesn't fit
     exact_tokens: int | None = None  # countTokens result, when exact counting is on
+    replay_tokens: int = 0  # exact re-billed tokens included in the estimate (D21)
 
     def spec(self) -> dict:
         """What the model saw, small enough to store for every call (D14)."""
@@ -74,6 +75,7 @@ class PromptView:
             "summary_covers": self.summary_covers,
             "estimated_tokens": self.estimated_tokens,
             "exact_tokens": self.exact_tokens,
+            "replay_tokens": self.replay_tokens,
             "events": [e.kind for e in self.events],
         }
 

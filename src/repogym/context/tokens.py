@@ -47,8 +47,14 @@ class TokenEstimator:
             system, tools, messages
         ) / self.chars_per_token + PER_MESSAGE_OVERHEAD * (len(messages) + 1)
 
+    @staticmethod
+    def replay(messages: list[Message]) -> int:
+        """Exact extra tokens billed for replayed messages (Gemma's thought parts; D21)."""
+        return sum(m.replay_tokens for m in messages)
+
     def estimate(self, system: str, tools: list[dict], messages: list[Message]) -> int:
-        return int(self.raw(system, tools, messages) * self.factor * SAFETY) + 1
+        raw = self.raw(system, tools, messages)
+        return int(raw * self.factor * SAFETY) + 1 + self.replay(messages)
 
     def text_tokens(self, text: str) -> int:
         return int(len(text) / self.chars_per_token * self.factor * SAFETY) + 1
@@ -57,8 +63,11 @@ class TokenEstimator:
         """How many characters fit in ``tokens`` under the current (conservative) estimate."""
         return max(int(tokens * self.chars_per_token / (self.factor * SAFETY)), 0)
 
-    def observe(self, raw_estimate: float, estimated: int, reported: int | None) -> dict:
-        """Record one call's error and update the calibration factor."""
+    def observe(
+        self, raw_estimate: float, estimated: int, reported: int | None, replay: int = 0
+    ) -> dict:
+        """Record one call's error and update the calibration factor. ``replay`` (exact
+        re-billed tokens) is taken out first, so the factor only calibrates text."""
         record = {
             "estimated": estimated,
             "reported": reported,
@@ -66,7 +75,8 @@ class TokenEstimator:
             "factor_before": round(self.factor, 4),
         }
         if reported and raw_estimate > 0:
-            ratio = min(max(reported / raw_estimate, self.bounds[0]), self.bounds[1])
+            text_tokens = max(reported - replay, 1)
+            ratio = min(max(text_tokens / raw_estimate, self.bounds[0]), self.bounds[1])
             self.factor = (1 - self.alpha) * self.factor + self.alpha * ratio
         record["factor_after"] = round(self.factor, 4)
         self.history.append(record)

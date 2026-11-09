@@ -211,8 +211,11 @@ class GeminiProvider:
         finish = candidate.finish_reason.name if candidate and candidate.finish_reason else None
         if candidate is None or candidate.content is None or finish not in OK_FINISH:
             raise bad_response(f"{self.settings.model}: finish_reason {finish}", attempts, waited)
+        message = from_content(candidate.content)
+        if any(p.thought for p in candidate.content.parts or []):
+            message.replay_tokens = 2 * (usage.thinking_tokens or 0)  # D21
         return Generation(
-            message=from_content(candidate.content),
+            message=message,
             usage=usage,
             finish_reason=finish,
             model_version=response.model_version,

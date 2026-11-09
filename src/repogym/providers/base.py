@@ -39,6 +39,10 @@ class Message:
     extra_text: list[str] = field(default_factory=list)
     raw: dict | None = None  # provider-native assistant content, replayed byte-for-byte
     provider: str | None = None  # which provider produced ``raw``
+    # Input tokens the API bills each time this message is replayed beyond its visible text
+    # and calls: Gemma returns its thinking as a thought-text part, which is billed twice
+    # (2 x its thinking tokens, measured; D21). Exact, so not scaled by the estimator.
+    replay_tokens: int = 0
 
     def copy(self) -> Message:
         return copy.deepcopy(self)

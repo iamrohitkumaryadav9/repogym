@@ -227,6 +227,7 @@ class ContextManager:
             messages=messages,
             estimated_tokens=estimated,
             raw_estimate=raw,
+            replay_tokens=self.estimator.replay(messages),
             units=states,
             clipped=clipped,
             events=events,
