@@ -35,10 +35,11 @@ from repogym.experiments import guard
 from repogym.experiments.spec import Cell, Experiment, release_tasks
 from repogym.harness import EpisodeRecord, run_episode
 from repogym.providers.gemini import GeminiProvider, GeminiSettings
-from repogym.ratelimit import LimitsConfig, QuotaLedger, RateLimiter
+from repogym.ratelimit import AttemptLog, LimitsConfig, QuotaLedger, RateLimiter
 
 log = structlog.get_logger()
 LEDGER_PATH = DATA_DIR / "quota" / "ledger.json"
+ATTEMPTS_DIR = DATA_DIR / "quota"  # attempts-<UTC day>.jsonl: every API attempt (D16)
 HARNESS_ERROR_RERUNS = 1
 # A cell gets at most this many api_failure attempts; then it is recorded as api_failure,
 # reported, and not retried (D16). Daily-quota interruptions don't count: they come from our
@@ -157,10 +158,11 @@ def provenance(experiment: Experiment, cell: Cell, previous: list[dict] | None =
         "model_settings": experiment.model_settings[cell.model],
         "context": experiment.context.as_dict(),
         "limits_margin": experiment.resolved()["limits_margin"],
+        "retry": experiment.retry.as_dict(),
     }
 
 
-def make_provider(model: str, settings: dict, api_key: str, limiter):
+def make_provider(model: str, settings: dict, api_key: str, limiter, policy=None, attempt_log=None):
     if settings.get("provider", "gemini") != "gemini":
         raise ValueError(f"provider {settings.get('provider')!r} isn't wired into the runner yet")
     return GeminiProvider(
@@ -172,6 +174,8 @@ def make_provider(model: str, settings: dict, api_key: str, limiter):
         ),
         api_key=api_key,
         limiter=limiter,
+        policy=policy,
+        attempt_log=attempt_log,
     )
 
 
@@ -195,6 +199,7 @@ class Runner:
         sleep=time.sleep,
         on_done: Callable[[EpisodeRecord], None] | None = None,
         guard_fn: Callable = guard.check,
+        attempt_log: AttemptLog | None = None,
     ) -> None:
         guard_fn(experiment, final_test_run)
         self.experiment, self.api_key = experiment, api_key
@@ -204,6 +209,7 @@ class Runner:
         self.clock, self.sleep, self.on_done = clock, sleep, on_done
         self.tasks = release_tasks(experiment.release)
         self.stop = threading.Event()
+        self.attempt_log = attempt_log if attempt_log is not None else AttemptLog(ATTEMPTS_DIR)
 
     def pending(self, model: str) -> list[Cell]:
         done = latest_records(self.experiment.run_dir)
@@ -216,7 +222,12 @@ class Runner:
     def worker(self, model: str) -> None:
         limiter = RateLimiter(model, self.limits, self.ledger, clock=self.clock, sleep=self.sleep)
         provider = self.provider_fn(
-            model, self.experiment.model_settings[model], self.api_key, limiter
+            model,
+            self.experiment.model_settings[model],
+            self.api_key,
+            limiter,
+            self.experiment.retry,
+            self.attempt_log,
         )
         beat = Heartbeat(self.experiment.run_dir, model, self.clock)
         while not self.stop.is_set():

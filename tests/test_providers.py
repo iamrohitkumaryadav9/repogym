@@ -78,7 +78,7 @@ class RecordingLimiter:
         return 12345.0
 
 
-def provider(script, sleeps=None, limiter=None, settings=None):
+def provider(script, sleeps=None, limiter=None, settings=None, policy=None):
     sleeps = [] if sleeps is None else sleeps
     return GeminiProvider(
         settings or GeminiSettings(model="gemma-4-26b-a4b-it"),
@@ -86,7 +86,7 @@ def provider(script, sleeps=None, limiter=None, settings=None):
         client=FakeClient(script),
         sleep=sleeps.append,
         limiter=limiter or RecordingLimiter(),
-        policy=RetryPolicy(max_attempts=4, base_delay=1.0),
+        policy=policy or RetryPolicy(max_attempts=4, base_delay=1.0, server_max_failures=4),
     )
 
 
@@ -402,3 +402,149 @@ def test_replies_with_thought_text_carry_their_replay_cost():
     assert g.message.replay_tokens == 240 and "let me think" not in g.message.text
     plain = p.generate("s", [Message(role="user", text="t")], TOOLS)
     assert plain.message.replay_tokens == 0  # no thought part: nothing extra is replayed
+
+
+# -- D16 (amended): server errors pause in place; daily quota holds the call ----------------
+
+
+from repogym.providers.base import Generation  # noqa: E402
+from repogym.providers.retry import Outcome, run_with_retries  # noqa: E402
+
+
+class Clock:
+    """Fake monotonic and wall clocks that advance only when something sleeps."""
+
+    def __init__(self):
+        self.t, self.sleeps = 1_800_000_000.0, []
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.t += seconds
+
+
+def scripted(statuses):
+    queue = list(statuses)
+
+    def send():
+        status = queue.pop(0)
+        return Outcome(ok=True, status=200, value="ok") if status == 200 else Outcome(False, status)
+
+    return send
+
+
+def retry(send, clock, policy=None, **kw):
+    import random as _random
+
+    return run_with_retries(
+        send,
+        policy=policy or RetryPolicy(),
+        model="m",
+        sleep=clock.sleep,
+        clock=clock,
+        wall=clock,
+        rng=_random.Random(0),
+        **kw,
+    )
+
+
+def test_server_errors_are_retried_in_place_with_capped_jittered_backoff():
+    clock = Clock()
+    value, attempts = retry(scripted([500] * 6 + [503] * 3 + [200]), clock)  # 9 failures
+    assert value == "ok" and len(attempts) == 10 and attempts[-1].kind == "ok"
+    assert 15 <= clock.sleeps[0] <= 45  # starts around 30 s, with jitter
+    assert max(clock.sleeps) <= 600  # never more than 10 minutes between tries
+    assert all(a.at is not None for a in attempts)
+
+
+def test_twenty_consecutive_server_errors_give_up():
+    clock = Clock()
+    policy = RetryPolicy(server_max_seconds=10**9)  # only the count can end it
+    with pytest.raises(ProviderUnavailable, match="20 consecutive server errors") as info:
+        retry(scripted([500] * 25), clock, policy)
+    assert len(info.value.attempts) == 20 and info.value.attempts[-1].slept == 0.0
+
+
+def test_sixty_minutes_of_server_errors_give_up_first():
+    clock = Clock()
+    with pytest.raises(ProviderUnavailable) as info:
+        retry(scripted([500] * 25), clock)
+    # With 30 s doubling to a 10-minute cap, 60 minutes are used up after ~10-11 failures:
+    # at these settings the time limit always comes before the 20-failure limit.
+    assert 10 <= len(info.value.attempts) <= 12
+    failed_for = clock.t - info.value.attempts[0].at
+    assert failed_for == pytest.approx(3600.0)  # the waits are trimmed to the 60-minute budget
+
+
+def test_rate_limits_and_client_errors_keep_their_own_rules():
+    clock = Clock()
+    with pytest.raises(ProviderUnavailable, match="rate limited 6 times"):
+        retry(lambda: Outcome(False, 429, body={}), clock)
+    with pytest.raises(RequestRejected):
+        retry(scripted([500, 400]), Clock())  # a 4xx after a 5xx is still rejected at once
+
+
+def test_daily_quota_holds_the_call_until_the_reset_then_continues():
+    clock = Clock()
+    reset = clock.t + 5 * 3600
+    calls = {"n": 0}
+
+    def before():  # the limiter: today's quota is used up, once
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise DailyQuotaExhausted("used up", reset_at=reset)
+
+    policy = RetryPolicy(pause_on_daily=True)
+    value, attempts = retry(scripted([200]), clock, policy, before_attempt=before)
+    assert value == "ok" and clock.sleeps == [pytest.approx(5 * 3600 + 60)]
+    assert [a.kind for a in attempts] == ["daily_quota_pause", "ok"]
+    gen_like = Generation(
+        message=None,
+        usage=None,
+        finish_reason=None,
+        model_version=None,
+        latency_seconds=0,
+        http_status=200,
+        attempts=attempts,
+    )
+    assert gen_like.quota_pause_seconds == pytest.approx(5 * 3600 + 60)
+    assert gen_like.wait_seconds >= gen_like.quota_pause_seconds
+
+
+def test_a_daily_429_also_pauses_but_only_once_per_call():
+    clock = Clock()
+    body = {
+        "error": {"details": [{"violations": [{"quotaId": "GenerateRequestsPerDayPerProject"}]}]}
+    }
+    queue = [Outcome(False, 429, body=body), Outcome(False, 429, body=body)]
+    policy = RetryPolicy(pause_on_daily=True)
+    with pytest.raises(DailyQuotaExhausted):
+        retry(lambda: queue.pop(0), clock, policy, on_daily=lambda: clock.t + 100)
+    assert len(clock.sleeps) == 1  # paused once, then gave up instead of pausing forever
+    without = Clock()
+    with pytest.raises(DailyQuotaExhausted):
+        retry(lambda: Outcome(False, 429, body=body), without, on_daily=lambda: without.t + 100)
+    assert without.sleeps == []  # pausing is off by default
+
+
+def test_every_attempt_is_streamed_to_the_attempt_log():
+    seen = []
+    retry(scripted([500, 503, 200]), Clock(), on_attempt=seen.append)
+    assert [a.status for a in seen] == [500, 503, 200] and all(a.at for a in seen)
+
+
+def test_attempt_log_numbers_each_calls_attempts_per_utc_day(tmp_path):
+    import json as _json
+
+    from repogym.ratelimit import AttemptLog
+
+    log = AttemptLog(tmp_path)
+    p = provider([api_error(500, {}), response([types.Part(text="ok")])])
+    p.attempt_log = log
+    p.generate("s", [Message(role="user", text="t")], TOOLS)
+    files = list(tmp_path.glob("attempts-*.jsonl"))
+    rows = [_json.loads(x) for x in files[0].read_text().splitlines()]
+    assert len(files) == 1 and [(r["attempt"], r["status"]) for r in rows] == [(1, 500), (2, 200)]
+    assert all(r["model"] == "gemma-4-26b-a4b-it" and r["at"] for r in rows)

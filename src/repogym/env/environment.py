@@ -96,6 +96,7 @@ class EpisodeState(BaseModel):
     elapsed_seconds: float = 0.0
     waiting_seconds: float = 0.0  # reported throttling (record_wait)
     active_seconds: float = 0.0  # elapsed - waiting: what max_wall_seconds caps
+    quota_pause_seconds: float = 0.0  # held across a daily-quota reset (part of waiting)
     total_observation_chars: int = 0
     disk_mb: float = 0.0  # container writable layer after the last step
     peak_disk_mb: float = 0.0
@@ -215,6 +216,7 @@ class Environment:
         self.instruction_style = instruction_style
         self._t0 = 0.0
         self._waited = 0.0  # reported throttling time, excluded from the active-time cap
+        self._quota_paused = 0.0  # daily-quota holds, also excluded from the elapsed cap
         self._tracked: set[str] = set()
         self.probe_info: dict = {}  # history_overlap, filled in during setup
 
@@ -252,6 +254,7 @@ class Environment:
             elapsed = self._clock() - self._t0
             self._state.elapsed_seconds = round(elapsed, 2)
             self._state.waiting_seconds = round(self._waited, 2)
+            self._state.quota_pause_seconds = round(self._quota_paused, 2)
             self._state.active_seconds = round(elapsed - self._waited, 2)
         return self._state.model_copy(deep=True)
 
@@ -374,6 +377,11 @@ class Environment:
         excluded from the active-time cap and recorded; only max_elapsed_seconds sees it."""
         self._waited += max(float(seconds or 0.0), 0.0)
 
+    def record_quota_pause(self, seconds: float) -> None:
+        """Report a hold across a daily-quota reset (already included in record_wait). It is a
+        known, scheduled wait, not a hang, so the elapsed safety cap doesn't count it (D16)."""
+        self._quota_paused += max(float(seconds or 0.0), 0.0)
+
     def close(self) -> None:
         if self.sandbox is not None:
             self.sandbox.remove()
@@ -448,7 +456,7 @@ class Environment:
         if self._state.step_count >= self.budgets.max_steps and not after_step:
             return "steps"
         cap = self.budgets.max_elapsed_seconds
-        if cap is not None and self._clock() - self._t0 >= cap:
+        if cap is not None and self._clock() - self._t0 - self._quota_paused >= cap:
             return "elapsed"
         if self._remaining() <= 0:
             return "wall_clock"

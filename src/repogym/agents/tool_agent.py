@@ -220,6 +220,8 @@ class ToolAgent:
             )
             wall = time.monotonic() - t0
             env.record_wait(gen.wait_seconds)
+            if gen.quota_pause_seconds:
+                env.record_quota_pause(gen.quota_pause_seconds)
             u = gen.usage
             metrics = {
                 "prompt_tokens": u.prompt_tokens,
@@ -302,6 +304,8 @@ class ToolAgent:
                 continue
             wall = time.monotonic() - t0
             env.record_wait(gen.wait_seconds)
+            if gen.quota_pause_seconds:
+                env.record_quota_pause(gen.quota_pause_seconds)
             record = self.context.estimator.observe(
                 view.raw_estimate,
                 view.estimated_tokens,

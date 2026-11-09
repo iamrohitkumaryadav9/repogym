@@ -73,8 +73,10 @@ class OpenAICompatProvider:
         sleep=time.sleep,
         sampling: dict | None = None,
         max_output_tokens: int = 8192,
+        attempt_log=None,
     ) -> None:
         self.name = model
+        self.attempt_log = attempt_log
         self.base_url = base_url.rstrip("/")
         self._key = api_key
         self.limiter = limiter or NullLimiter()
@@ -118,6 +120,7 @@ class OpenAICompatProvider:
             sleep=self._sleep,
             before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
             on_daily=self.limiter.mark_daily_exhausted,
+            on_attempt=self._attempt_logger(),
         )
         u = data.get("usage") or {}
         usage = Usage(
@@ -130,6 +133,17 @@ class OpenAICompatProvider:
         self.limiter.settle(usage.prompt_tokens)
         waited = sum(waits)
         return data, usage, attempts, api_seconds(started, waited, attempts), waited
+
+    def _attempt_logger(self):
+        if self.attempt_log is None:
+            return None
+        counter = {"n": 0}
+
+        def record(attempt) -> None:
+            counter["n"] += 1
+            self.attempt_log.record(self.name, attempt, counter["n"])
+
+        return record
 
     def generate(
         self, system: str, messages: list[Message], tools: list[dict], estimated_tokens: int = 0

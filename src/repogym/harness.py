@@ -250,6 +250,7 @@ def run_episode(
             "elapsed": state.elapsed_seconds,
             "active": state.active_seconds,
             "waiting": state.waiting_seconds,
+            "quota_pause": state.quota_pause_seconds,
         }
     record.termination = termination_of(record)
     record.ended_at = now()

@@ -95,6 +95,9 @@ class EnvFacade:
     def record_wait(self, seconds):
         return self._env.record_wait(seconds)
 
+    def record_quota_pause(self, seconds):
+        return self._env.record_quota_pause(seconds)
+
 
 def agent(script, strategy="obs_mask", budget=12_000, system_prompt=None, **kw):
     cm = ContextManager(strategy, ContextConfig(budget=budget, **kw), TokenEstimator())
@@ -474,3 +477,35 @@ def test_preserved_thinking_share_of_prompt_and_budget():
     acct = accounting.summarize(env.steps, env.events, "gemma-4-26b-a4b-it")
     assert acct["preserved_thinking"]["calls"] == 1
     assert acct["preserved_thinking"]["share_of_prompt"]["max"] == 0.0
+
+
+def test_a_call_held_across_the_quota_reset_keeps_the_episode_going():
+    """A 20-hour daily-quota hold: same episode and sandbox, not active time, and not counted
+    by the 6-hour elapsed safety cap (D16, D17)."""
+    from repogym.providers.base import Attempt as _Attempt
+
+    clock = FakeClock()
+    script = [reply(("bash", {"command": "ls"})) for _ in range(3)] + [reply(("submit", {}))]
+    a = agent(script)
+    inner = a.provider.generate
+    held = {"done": False}
+
+    def generate(*args, **kwargs):
+        gen = inner(*args, **kwargs)
+        gen.attempts = [_Attempt(200, "ok")]
+        gen.latency_seconds = 1.0
+        if not held["done"]:  # the second call waits for the reset
+            held["done"] = True
+            gen.attempts = [_Attempt(None, "daily_quota_pause", None, 72_000.0), *gen.attempts]
+        clock.t += gen.wait_seconds + 1.0
+        return gen
+
+    a.provider.generate = generate
+    env = env_with(Budgets(max_wall_seconds=600, max_elapsed_seconds=6 * 3600))
+    env._clock, env._t0 = clock, clock()
+    a.run(EnvFacade(env), Observation(text="Fix the issue: X is broken."))
+    state = env.state()
+    assert state.done_reason == "submitted" and state.step_count == 4  # one episode throughout
+    assert state.elapsed_seconds == pytest.approx(72_000 + 4.0)
+    assert state.quota_pause_seconds == pytest.approx(72_000.0)
+    assert state.active_seconds == pytest.approx(4.0)

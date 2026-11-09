@@ -62,10 +62,13 @@ class Attempt:
     """One HTTP attempt of a call (successful or retried)."""
 
     status: int | None  # HTTP status, or None for a transport error
-    kind: str  # ok | rate_limited | daily_quota | server_error | transport_error | rejected
+    # ok | rate_limited | daily_quota | daily_quota_pause | server_error | transport_error
+    # | rejected
+    kind: str
     retry_delay: float | None = None  # what the server asked for, if anything
     slept: float = 0.0
     quota_ids: list[str] = field(default_factory=list)
+    at: float | None = None  # wall-clock time the attempt was made (epoch seconds)
 
 
 @dataclass
@@ -86,6 +89,12 @@ class Generation:
     @property
     def backoff_seconds(self) -> float:
         return sum(a.slept or 0.0 for a in self.attempts)
+
+    @property
+    def quota_pause_seconds(self) -> float:
+        """Time held in place across a daily-quota reset (D16); also excluded from the
+        elapsed safety cap."""
+        return sum(a.slept or 0.0 for a in self.attempts if a.kind == "daily_quota_pause")
 
     @property
     def wait_seconds(self) -> float:

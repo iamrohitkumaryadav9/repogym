@@ -425,3 +425,14 @@ def test_model_overrides_change_only_that_experiment_and_are_hashed(tmp_path):
     assert high.resolved()["model_settings"]["gemini-3.5-flash-lite"]["thinking_level"] == "high"
     with pytest.raises(ExperimentError, match="model_overrides for models not in"):
         write_exp(tmp_path, model_overrides={"gemma-4-31b-it": {"thinking_level": "high"}})
+
+
+def test_retry_thresholds_are_preregistered_hashed_and_overridable(tmp_path):
+    exp = write_exp(tmp_path)
+    r = exp.resolved()["retry"]
+    assert r["server_base_delay"] == 30.0 and r["server_max_delay"] == 600.0
+    assert r["server_max_failures"] == 20 and r["server_max_seconds"] == 3600.0
+    assert r["pause_on_daily"] is True and "retry" in guard.FROZEN_KEYS
+    changed = write_exp(tmp_path, retry={"server_max_seconds": 1800})
+    assert changed.retry.server_max_seconds == 1800 and changed.retry.pause_on_daily is True
+    assert changed.resolved_sha256 != exp.resolved_sha256

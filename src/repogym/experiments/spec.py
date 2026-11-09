@@ -19,6 +19,7 @@ from repogym.context.base import ContextConfig
 from repogym.context.strategies import STRATEGIES
 from repogym.context.tokens import SAFETY, TokenEstimator
 from repogym.env.budgets import Budgets
+from repogym.providers.retry import RetryPolicy
 from repogym.release import ReleaseTask
 from repogym.tools.definitions import TOOLS
 
@@ -64,6 +65,8 @@ class Experiment:
     path: Path | None = None
     file_sha256: str = ""
     runs_root: Path | None = None  # default data/runs (tests override it)
+    # Pre-registered retry thresholds (D16): 5xx in-place backoff, daily-quota hold.
+    retry: RetryPolicy = field(default_factory=lambda: RetryPolicy(pause_on_daily=True))
     raw: dict = field(default_factory=dict)
 
     @property
@@ -91,6 +94,7 @@ class Experiment:
             "repeat_start": self.repeat_start,
             "context": self.context.as_dict(),
             "budgets": self.budgets.model_dump(),
+            "retry": self.retry.as_dict(),
             "release": self.release,
             "model_settings": {m: self.model_settings[m] for m in self.models},
             "limits_sha256": sha256_bytes(self.limits_path.read_bytes()),
@@ -214,6 +218,7 @@ def load(path: Path) -> Experiment:
         limits_path=ROOT / data.get("limits", "configs/limits/gemini_free_tier.yaml"),
         release=data.get("release", "v0.1"),
         frozen_config=data.get("frozen_config"),
+        retry=RetryPolicy(**{"pause_on_daily": True, **(data.get("retry") or {})}),
         path=path,
         file_sha256=sha256_bytes(raw_bytes),
         raw=data,

@@ -146,7 +146,7 @@ def test_margin_is_applied(tmp_path):
 
 def test_retry_backoff_is_bounded_and_every_attempt_is_recorded():
     sleeps = []
-    policy = RetryPolicy(max_attempts=5, base_delay=2.0, max_delay=10.0)
+    policy = RetryPolicy(server_max_failures=5, server_base_delay=2.0, server_max_delay=10.0)
     with pytest.raises(ProviderUnavailable) as info:
         run_with_retries(
             lambda: Outcome(False, 503),
@@ -156,7 +156,7 @@ def test_retry_backoff_is_bounded_and_every_attempt_is_recorded():
             rng=random.Random(0),
         )
     assert len(info.value.attempts) == 5 and len(sleeps) == 4
-    assert all(s <= 10.0 * 1.5 for s in sleeps)  # capped, even with jitter
+    assert all(s <= 10.0 for s in sleeps)  # capped after jitter
 
 
 def test_server_retry_delay_is_honoured_above_the_backoff():

@@ -31,6 +31,7 @@ FROZEN_KEYS = (
     "strategies",
     "context",
     "budgets",
+    "retry",
     "model_settings",
     "limits_margin",
     "prompts",
