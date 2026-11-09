@@ -1,4 +1,4 @@
-"""Prompt token estimation, calibrated online per model (D13, D15).
+"""Prompt token estimation, calibrated online within each episode (D13, D15).
 
 The estimate starts conservative: few characters per token, so it over-counts. After each call
 it learns the ratio of the API's reported prompt tokens to its raw estimate (an exponential

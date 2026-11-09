@@ -192,7 +192,85 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     `extra.repogym.truncated` is set and the episode is flagged `stored_observation_truncated`.
   * Hitting the total cap ends the episode with termination `harness_error`, never a context
     failure, so it's visible and can't be confused with the strategy's behaviour.
-  * A unit test checks that the environment cap is above the prompt clip limit. The clip is
-    2,000 tokens, about 8,000 characters at the conservative rate; the cap is 200,000 characters.
+  * Loading an experiment refuses any `max_observation_chars` at or below the most the clip can
+    ever keep. That's `clip_tokens x 2.5 chars/token / (0.3 lowest calibration factor x 1.05)`,
+    about 15,900 characters for a 2,000-token clip, against a cap of 200,000. So the Week 2
+    default (10,000) can't slip into a Week 3 experiment. Unit tests cover the check and every
+    file in `configs/experiments/`.
 * **Consequences.** Week 2's scripted agents keep their original budgets (Week 2 evidence is
   unchanged). The Week 3 settings live in the experiment config.
+
+## D15. The token estimator starts conservative and is calibrated online, per episode
+
+* **Context.** B is enforced before each call, but the API reports the true prompt size only
+  afterwards. A naive estimate under-counts badly: a text estimated by words x 2 as 12,000 tokens
+  was really 28,891 (D13 probe). Exact `countTokens` before every call is a Gate 1 decision
+  (D13); an estimate is needed in any case, as the fallback and for Flash-Lite.
+* **Options.**
+  1. A fixed characters-per-token ratio.
+  2. A local tokenizer (none is published for Gemini 3.5; Gemma's is, but it would cover only
+     two of the three models).
+  3. A conservative ratio, calibrated online against each call's reported `prompt_tokens`.
+* **Decision.** (3):
+  * Start at 2.5 characters per token, below the usual 3–4 for code and JSON, so the first
+    calls over-count.
+  * Add 8 tokens of per-message overhead and a 1.05 safety margin.
+  * After each call, update a factor (reported / raw estimate) as an exponential moving average
+    with alpha 0.3, clamped to [0.3, 3.0].
+  * The estimator is created fresh for each episode. Episodes stay independent of the order they
+    run in, so repeats are exchangeable and a resumed run behaves like an uninterrupted one.
+  * Every call records estimated tokens, reported tokens, the relative error, and whether
+    reported > B (a budget violation).
+* **Consequences.**
+  * The first one or two calls of an episode are the least accurate. At that point the prompt is
+    far below B, so violations should cluster late, where the factor has converged.
+  * `budget_violations` and the estimation-error mean and max are reported per episode and per
+    strategy. If violations aren't rare (target: under 1% of calls) at Gate 1, the fallback is
+    exact `countTokens` (D13).
+
+## D16. The experiment runner: cells, resume, exclusion rules, concurrency
+
+* **Context.** E1–E3 run for days under daily quotas, on one 7.7 GiB machine, and must survive
+  restarts without duplicating or silently dropping episodes.
+* **Decision.**
+  * An experiment file defines a grid of cells (model x strategy x task x repeat), each with a
+    stable key. Its provenance records the file's sha256 and the sha256 of the fully resolved
+    config: tasks, context and budget settings, model settings, the limits file and margin, and
+    the prompt texts and tool schemas.
+  * A cell is done when its latest record exists and isn't an `api_failure`.
+    * An interrupted episode leaves no record and reruns.
+    * A `harness_error` is rerun **once**, and both records are kept and reported.
+    * An `api_failure` from daily-quota exhaustion makes that model's worker sleep until the
+      next midnight-Pacific reset plus 60 s, while the other models continue.
+    * Any other `api_failure` pauses the worker for 60 s, then retries.
+  * Each model has one worker, so at most 3 episodes, and 3 sandbox containers, run at once.
+    That fits 7.7 GiB alongside Docker Desktop, and the free-tier limits are per model anyway,
+    so more workers per model would only queue on the limiter.
+  * Before anything runs, the guard enforces pilot hygiene (dev tasks only) and the test-split
+    rules (frozen config, matching hashes in the pre-registration, a clean tree, and
+    `--final-test-run`). Every refusal is appended to `data/runs/refusals.jsonl`.
+  * The Week 2 bash-only `baseline` agent is refused on test-split tasks. Test-split LLM
+    episodes come only from a frozen Week 3 experiment. The baseline itself is unchanged and
+    still runs on dev and train.
+* **Consequences.** Analysis uses each cell's latest record. A cell whose two records are both
+  `harness_error` is excluded from success rates and listed separately. Pilot records
+  (`experiment.pilot = true`) are excluded from all later analysis.
+
+## D17. Episode limits: 75 steps, a wall-clock safety cap that includes rate-limit waits
+
+* **Context.**
+  * The brief fixes a step cap of 75. The environment's wall-clock budget is measured from
+    episode start on a monotonic clock, so it includes time the agent spends waiting on the rate
+    limiter.
+  * Under Gemma's 16K TPM (D11), late-episode calls near B = 12,000 admit about one per minute.
+    So a 75-step episode can take more than an hour of mostly waiting.
+* **Decision.**
+  * `max_steps = 75`.
+  * The wall-clock cap is a safety net against hung episodes, not an experimental variable. The
+    pilot uses 3,600 s and records how long episodes take and how much of that is limiter sleep.
+  * The E1–E3 value is proposed at Gate 1 from those measurements. It is set high enough that it
+    essentially never binds, because a binding cap would penalise strategies whose larger prompts
+    wait longer for TPM. That would confound RQ1 with throughput.
+* **Consequences.** `wallclock_cap` terminations are reported per strategy. Any at all in E1 is
+  a red flag to be discussed, not quietly absorbed.
+
