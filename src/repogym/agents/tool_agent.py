@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from repogym.context.base import ContextOverflow, Unit, clip_text
 from repogym.context.strategies import ContextManager
 from repogym.env.environment import Action, Environment, Observation
-from repogym.providers.base import BadResponse, Message, ToolResult
+from repogym.providers.base import BadResponse, Message, ProviderError, ToolResult
 from repogym.tools.definitions import TOOLS
 
 SYSTEM_PROMPT = """You are a software engineer resolving a GitHub issue in a Python repository.
@@ -123,6 +123,14 @@ def render_unit(unit: Unit, clip_tokens: int, estimator) -> str:
     return "\n".join(lines)
 
 
+def report_waits(env, exc) -> None:
+    """A failing call's backoff and quota holds, reported before the error ends the episode."""
+    env.record_wait(exc.wait_seconds)
+    pause = sum(a.slept or 0.0 for a in exc.attempts if a.kind == "daily_quota_pause")
+    if pause:
+        env.record_quota_pause(pause)
+
+
 def waiting(gen, wall: float | None) -> dict:
     """Throttling inside the provider call (exact, from the provider) and the call's wall time.
 
@@ -212,12 +220,16 @@ class ToolAgent:
                 else f"Steps:\n{body}"
             ) + "\n\nWrite the updated summary."
             t0 = time.monotonic()
-            gen = self.provider.generate_text(
-                SUMMARY_SYSTEM,
-                prompt,
-                cfg.summary_max_tokens,
-                estimated_tokens=est.text_tokens(prompt),
-            )
+            try:
+                gen = self.provider.generate_text(
+                    SUMMARY_SYSTEM,
+                    prompt,
+                    cfg.summary_max_tokens,
+                    estimated_tokens=est.text_tokens(prompt),
+                )
+            except ProviderError as exc:
+                report_waits(env, exc)
+                raise
             wall = time.monotonic() - t0
             env.record_wait(gen.wait_seconds)
             if gen.quota_pause_seconds:
@@ -302,6 +314,9 @@ class ToolAgent:
                 if done:
                     return
                 continue
+            except ProviderError as exc:  # the episode ends; its waiting isn't active time
+                report_waits(env, exc)
+                raise
             wall = time.monotonic() - t0
             env.record_wait(gen.wait_seconds)
             if gen.quota_pause_seconds:

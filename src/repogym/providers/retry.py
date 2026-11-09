@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from repogym.providers.base import (
     Attempt,
     DailyQuotaExhausted,
+    ProviderError,
     ProviderUnavailable,
     RequestRejected,
 )
@@ -87,7 +88,18 @@ class Outcome:
     body: object = None
 
 
-def run_with_retries(
+def run_with_retries(*args, **kwargs):
+    """Call ``send`` until it succeeds. Returns (value, attempts). Any error raised carries
+    ``wait_seconds``: the backoff and quota holds it spent, so the caller can report them
+    (they are not active time, D17)."""
+    try:
+        return _run_with_retries(*args, **kwargs)
+    except ProviderError as exc:
+        exc.wait_seconds = (exc.wait_seconds or 0.0) + sum(a.slept or 0.0 for a in exc.attempts)
+        raise
+
+
+def _run_with_retries(
     send: Callable[[], Outcome],
     *,
     policy: RetryPolicy,
@@ -100,7 +112,6 @@ def run_with_retries(
     clock: Callable[[], float] = time.monotonic,
     wall: Callable[[], float] = time.time,
 ):
-    """Call ``send`` until it succeeds. Returns (value, attempts)."""
     rng = rng or random.Random()
     attempts: list[Attempt] = []
     rate_limited = server_failures = daily_pauses = 0

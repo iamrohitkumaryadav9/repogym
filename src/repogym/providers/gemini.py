@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from repogym.providers.base import (
     Generation,
     Message,
+    ProviderError,
     ToolCall,
     Usage,
     api_seconds,
@@ -209,15 +210,19 @@ class GeminiProvider:
                 return Outcome(ok=False, status=None, body={"error": type(exc).__name__})
             return Outcome(ok=True, status=200, value=response)
 
-        response, attempts = run_with_retries(
-            send,
-            policy=self.policy,
-            model=self.settings.model,
-            sleep=self._sleep,
-            before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
-            on_daily=self.limiter.mark_daily_exhausted,
-            on_attempt=self._attempt_logger(),
-        )
+        try:
+            response, attempts = run_with_retries(
+                send,
+                policy=self.policy,
+                model=self.settings.model,
+                sleep=self._sleep,
+                before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
+                on_daily=self.limiter.mark_daily_exhausted,
+                on_attempt=self._attempt_logger(),
+            )
+        except ProviderError as exc:
+            exc.wait_seconds += sum(waits)  # the limiter's share (D17)
+            raise
         usage = usage_of(response.usage_metadata)
         self.limiter.settle(usage.prompt_tokens)
         waited = sum(waits)
@@ -273,15 +278,19 @@ class GeminiProvider:
             except Exception as exc:  # noqa: BLE001 - transport errors
                 return Outcome(False, None, body={"error": type(exc).__name__})
 
-        response, attempts = run_with_retries(
-            send,
-            policy=self.policy,
-            model=self.settings.model,
-            sleep=self._sleep,
-            before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
-            on_daily=self.limiter.mark_daily_exhausted,
-            on_attempt=self._attempt_logger(),
-        )
+        try:
+            response, attempts = run_with_retries(
+                send,
+                policy=self.policy,
+                model=self.settings.model,
+                sleep=self._sleep,
+                before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
+                on_daily=self.limiter.mark_daily_exhausted,
+                on_attempt=self._attempt_logger(),
+            )
+        except ProviderError as exc:
+            exc.wait_seconds += sum(waits)  # the limiter's share (D17)
+            raise
         usage = usage_of(response.usage_metadata)
         self.limiter.settle(usage.prompt_tokens)
         waited = sum(waits)

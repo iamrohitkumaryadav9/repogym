@@ -509,3 +509,47 @@ def test_a_call_held_across_the_quota_reset_keeps_the_episode_going():
     assert state.elapsed_seconds == pytest.approx(72_000 + 4.0)
     assert state.quota_pause_seconds == pytest.approx(72_000.0)
     assert state.active_seconds == pytest.approx(4.0)
+
+
+def test_a_call_that_finally_fails_still_reports_its_waiting():
+    """The click-3504 case: 60 minutes of in-place 5xx retries, then ProviderUnavailable. That
+    hour is waiting, not active time (it was counted as active before the fix)."""
+    from repogym.providers.base import Attempt as _Attempt
+    from repogym.providers.base import ProviderUnavailable
+
+    clock = FakeClock()
+    failed = ProviderUnavailable(
+        "11 consecutive server errors over 60 min", [_Attempt(500, "server_error", None, 3_600.0)]
+    )
+    failed.wait_seconds = 3_600.0
+    a = agent([reply(("bash", {"command": "ls"})), failed])
+    inner = a.provider.generate
+
+    def generate(*args, **kwargs):
+        if len(a.provider.script) == 1:  # the failing call takes an hour of retries
+            clock.t += 3_600.0
+        return inner(*args, **kwargs)
+
+    a.provider.generate = generate
+    env = env_with(Budgets(max_wall_seconds=600))
+    env._clock, env._t0 = clock, clock()
+    with pytest.raises(ProviderUnavailable):
+        a.run(EnvFacade(env), Observation(text="Fix the issue: X is broken."))
+    state = env.state()
+    assert state.waiting_seconds >= 3_600.0 and state.active_seconds < 600
+
+
+def test_retry_errors_carry_the_time_they_spent():
+    from repogym.providers.retry import Outcome as _Outcome
+    from repogym.providers.retry import RetryPolicy as _Policy
+    from repogym.providers.retry import run_with_retries
+
+    sleeps = []
+    with pytest.raises(Exception) as info:
+        run_with_retries(
+            lambda: _Outcome(False, 500),
+            policy=_Policy(server_max_failures=3, server_max_seconds=10**9),
+            model="m",
+            sleep=sleeps.append,
+        )
+    assert info.value.wait_seconds == pytest.approx(sum(sleeps)) and len(sleeps) == 2

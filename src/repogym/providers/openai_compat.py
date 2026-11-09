@@ -16,6 +16,7 @@ from repogym.providers.base import (
     BadResponse,
     Generation,
     Message,
+    ProviderError,
     ToolCall,
     Usage,
     api_seconds,
@@ -113,15 +114,19 @@ class OpenAICompatProvider:
                 return Outcome(False, r.status_code, body=detail)
             return Outcome(True, 200, r.json())
 
-        data, attempts = run_with_retries(
-            send,
-            policy=self.policy,
-            model=self.name,
-            sleep=self._sleep,
-            before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
-            on_daily=self.limiter.mark_daily_exhausted,
-            on_attempt=self._attempt_logger(),
-        )
+        try:
+            data, attempts = run_with_retries(
+                send,
+                policy=self.policy,
+                model=self.name,
+                sleep=self._sleep,
+                before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
+                on_daily=self.limiter.mark_daily_exhausted,
+                on_attempt=self._attempt_logger(),
+            )
+        except ProviderError as exc:
+            exc.wait_seconds += sum(waits)  # the limiter's share (D17)
+            raise
         u = data.get("usage") or {}
         usage = Usage(
             prompt_tokens=u.get("prompt_tokens"),
