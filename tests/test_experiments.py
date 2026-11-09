@@ -395,3 +395,22 @@ def test_the_committed_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp
         check(pilot, tmp_path / "none.md", tmp_path, final=False)
     with pytest.raises(guard.RunRefused):
         check(pilot, tmp_path / "none.md", tmp_path, final=True)
+
+
+def test_a_run_can_be_limited_to_some_models(tmp_path):
+    exp = write_exp(tmp_path)
+    episodes = FakeEpisodes()
+    runner(exp, episodes, tmp_path).run(["gemma-4-26b-a4b-it"])
+    assert {k.split("__")[0] for k in episodes.calls} == {"gemma-4-26b-a4b-it"}
+    runner(exp, episodes, tmp_path).run()  # the rest later, same experiment
+    assert sorted(episodes.calls) == sorted(c.key for c in exp.cells())
+    with pytest.raises(ValueError, match="not in the experiment"):
+        runner(exp, episodes, tmp_path).run(["gpt-x"])
+
+
+def test_the_repilot_is_dev_only_on_new_tasks(tmp_path):
+    root = Path(__file__).parents[1] / "configs" / "experiments"
+    first, second = load(root / "pilot.yaml"), load(root / "repilot.yaml")
+    assert second.kind == "pilot" and second.split == "dev" and len(second.cells()) == 6
+    assert not set(first.task_ids) & set(second.task_ids)
+    check(second, tmp_path / "none.md", tmp_path, final=False)

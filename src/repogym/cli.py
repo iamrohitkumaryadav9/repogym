@@ -431,6 +431,10 @@ def run(
     final_test_run: Annotated[
         bool, typer.Option(help="Required (with the frozen config) for any test-split run.")
     ] = False,
+    models: Annotated[
+        list[str] | None,
+        typer.Option("--models", help="With --experiment: run only these models' workers."),
+    ] = None,
     split: Annotated[str, typer.Option(help="train | dev | test (primary split) | all")] = "dev",
     tasks: Annotated[list[str] | None, typer.Option("--tasks", help="Only these task ids.")] = None,
     workers: Annotated[int, typer.Option(help="Parallel episodes.")] = 2,
@@ -444,7 +448,7 @@ def run(
 
     With --experiment, runs a Week 3 experiment instead (resumable; one worker per model)."""
     if experiment is not None:
-        return _run_experiment(experiment, final_test_run)
+        return _run_experiment(experiment, final_test_run, models)
     if agent is None:
         typer.echo("give --agent or --experiment")
         raise typer.Exit(1)
@@ -602,7 +606,7 @@ def probe_history(
     typer.echo(f"{len(rows)} tasks probed; exact fix reachable: {len(reachable)} {reachable}")
 
 
-def _run_experiment(path: Path, final_test_run: bool) -> None:
+def _run_experiment(path: Path, final_test_run: bool, models: list[str] | None = None) -> None:
     from repogym.experiments import spec
     from repogym.experiments.guard import RunRefused
     from repogym.experiments.runner import Runner, gemini_api_key
@@ -624,7 +628,7 @@ def _run_experiment(path: Path, final_test_run: bool) -> None:
     except RunRefused as exc:
         typer.echo(f"REFUSED: {exc}")
         raise typer.Exit(2) from exc
-    runner.run()
+    runner.run(models)
 
 
 @app.command()

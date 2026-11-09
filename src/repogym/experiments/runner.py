@@ -261,10 +261,15 @@ class Runner:
                 beat.sleeping(self.clock() + 60, record.error_type)
                 self.sleep(60)  # per-minute exhaustion or an outage: brief pause, then retry
 
-    def run(self) -> None:
+    def run(self, models: list[str] | None = None) -> None:
+        """Run every model's worker, or only ``models`` (e.g. to start one model after its
+        quota reset). The experiment, its cells and provenance are the same either way."""
+        unknown = sorted(set(models or []) - set(self.experiment.models))
+        if unknown:
+            raise ValueError(f"models not in the experiment: {unknown}")
         threads = [
             threading.Thread(target=self.worker, args=(m,), name=f"worker-{m}", daemon=True)
-            for m in self.experiment.models
+            for m in (models or self.experiment.models)
         ]
         for t in threads:
             t.start()
