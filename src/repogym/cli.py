@@ -422,7 +422,15 @@ def env_check(task_id: Annotated[str, typer.Argument(help="Task id from the rele
 
 @app.command()
 def run(
-    agent: Annotated[str, typer.Option(help="oracle | null | cheater | baseline")],
+    agent: Annotated[
+        str | None, typer.Option(help="oracle | null | cheater | baseline (Week 2 runs)")
+    ] = None,
+    experiment: Annotated[
+        Path | None, typer.Option(help="Week 3 experiment file (configs/experiments/*.yaml).")
+    ] = None,
+    final_test_run: Annotated[
+        bool, typer.Option(help="Required (with the frozen config) for any test-split run.")
+    ] = False,
     split: Annotated[str, typer.Option(help="train | dev | test (primary split) | all")] = "dev",
     tasks: Annotated[list[str] | None, typer.Option("--tasks", help="Only these task ids.")] = None,
     workers: Annotated[int, typer.Option(help="Parallel episodes.")] = 2,
@@ -432,7 +440,14 @@ def run(
         str | None, typer.Option(help="LLM account tier to record in provenance (free | paid).")
     ] = None,
 ) -> None:
-    """Run an agent on a split; writes data/runs/<run_id>/ (episodes.jsonl + ATIF trajectories)."""
+    """Run an agent on a split; writes data/runs/<run_id>/ (episodes.jsonl + ATIF trajectories).
+
+    With --experiment, runs a Week 3 experiment instead (resumable; one worker per model)."""
+    if experiment is not None:
+        return _run_experiment(experiment, final_test_run)
+    if agent is None:
+        typer.echo("give --agent or --experiment")
+        raise typer.Exit(1)
     from datetime import UTC, datetime
 
     from repogym.agents.scripted import CheaterAgent, NullAgent, OracleAgent
@@ -444,6 +459,12 @@ def run(
     selected = [ReleaseTask.model_validate_json(line) for line in path.read_text().splitlines()]
     selected = [t for t in selected if (t.task_id in tasks if tasks else split in ("all", t.split))]
     factories = {"oracle": OracleAgent, "null": NullAgent, "cheater": lambda t: CheaterAgent(t)}
+    if agent == "baseline" and any(t.split == "test" for t in selected):
+        typer.echo(
+            "REFUSED: LLM agents may only touch test-split tasks through a frozen Week 3 "
+            "experiment with --final-test-run"
+        )
+        raise typer.Exit(2)
     if agent == "baseline":
         from repogym.agents.baseline import make_baseline
 
@@ -579,6 +600,49 @@ def probe_history(
             )
     reachable = [t for t, r in rows.items() if r["patch_id_match"]]
     typer.echo(f"{len(rows)} tasks probed; exact fix reachable: {len(reachable)} {reachable}")
+
+
+def _run_experiment(path: Path, final_test_run: bool) -> None:
+    from repogym.experiments import spec
+    from repogym.experiments.guard import RunRefused
+    from repogym.experiments.runner import Runner, gemini_api_key
+
+    exp = spec.load(path)
+    typer.echo(
+        f"experiment {exp.name} ({exp.kind}): {len(exp.cells())} cells, models "
+        f"{exp.models}, strategies {exp.strategies} -> {exp.run_dir}"
+    )
+
+    def show(record) -> None:
+        typer.echo(
+            f"  {record.episode_key:70} {record.termination:14} reward={record.reward} "
+            f"steps={record.steps}"
+        )
+
+    try:
+        runner = Runner(exp, gemini_api_key(), final_test_run=final_test_run, on_done=show)
+    except RunRefused as exc:
+        typer.echo(f"REFUSED: {exc}")
+        raise typer.Exit(2) from exc
+    runner.run()
+
+
+@app.command()
+def status(experiment: Annotated[Path, typer.Option(help="Experiment file.")]) -> None:
+    """Per-model progress, quota used today, tokens, solves and ETA for an experiment."""
+    from repogym.experiments import spec
+    from repogym.experiments.status import summary
+
+    exp = spec.load(experiment)
+    for row in summary(exp):
+        typer.echo(
+            f"{row['model']:24} {row['done']}/{row['total']} done, {row['solved']} solved | "
+            f"requests today {row['requests_today']}/{row['rpd_limit']}"
+            f"{' (EXHAUSTED)' if row['quota_exhausted_today'] else ''} | tokens in "
+            f"{row['input_tokens']:,} out {row['output_tokens']:,} | violations "
+            f"{row['budget_violations']} | {row['terminations']} | "
+            f"~{row['mean_episode_minutes']} min/episode, ETA {row['eta_hours']} h"
+        )
 
 
 @app.command("llm-audit")
