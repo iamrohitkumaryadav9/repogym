@@ -91,4 +91,8 @@ def summarize(steps, events, model: str | None, prices: dict | None = None) -> d
         "estimation_error_max_under": round(min(errors), 4) if errors else None,
         "retries": sum(c.get("retries", 0) for c in calls),
         "rate_limited_attempts": sum(c.get("rate_limited", 0) for c in calls),
+        # Time inside provider calls not spent on the API itself: limiter waits and retry
+        # backoff. It counts toward the wall-clock cap (D17).
+        "waiting_seconds": round(sum(c.get("waiting_seconds") or 0.0 for c in calls), 1),
+        "api_seconds": round(sum(c.get("latency_seconds") or 0.0 for c in calls), 1),
     }

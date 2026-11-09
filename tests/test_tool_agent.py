@@ -276,3 +276,22 @@ def test_shadow_count_is_logged_but_never_changes_the_prompt():
     assert [[m.text for m in p] for p in plain.provider.seen] == [
         [m.text for m in p] for p in shadowed.provider.seen
     ]
+
+
+def test_waiting_time_outside_the_api_is_recorded_per_call_and_summed():
+    a = agent([reply(("bash", {"command": "ls"})), reply(("submit", {}))])
+    inner = a.provider.generate
+
+    def slow_generate(*args, **kwargs):  # a limiter wait would look like this
+        import time
+
+        time.sleep(0.6)
+        return inner(*args, **kwargs)
+
+    a.provider.generate = slow_generate
+    env = run(a)
+    extra = env.steps[0].metrics["extra"]["repogym"]
+    assert extra["call_wall_seconds"] >= 0.6
+    assert extra["waiting_seconds"] == pytest.approx(extra["call_wall_seconds"] - 0.5, abs=1e-3)
+    acct = accounting.summarize(env.steps, env.events, a.model_name)
+    assert acct["api_seconds"] == 1.0 and acct["waiting_seconds"] >= 0.2

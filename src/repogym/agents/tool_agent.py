@@ -19,6 +19,7 @@ what the model saw (D14).
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 
 from repogym.context.base import ContextOverflow, Unit, clip_text
@@ -59,7 +60,17 @@ def render_unit(unit: Unit, clip_tokens: int, estimator) -> str:
     return "\n".join(lines)
 
 
-def call_metrics(gen, view, budget: int, record: dict) -> dict:
+def waiting(gen, wall: float | None) -> dict:
+    """Wall time of the provider call and the part spent waiting (limiter, retry backoff)."""
+    if wall is None:
+        return {}
+    return {
+        "call_wall_seconds": round(wall, 3),
+        "waiting_seconds": round(max(wall - gen.latency_seconds, 0.0), 3),
+    }
+
+
+def call_metrics(gen, view, budget: int, record: dict, wall: float | None = None) -> dict:
     """ATIF step metrics for one LLM call, with RepoGym's per-call record in ``extra``."""
     u = gen.usage
     output, thinking = u.output_tokens or 0, u.thinking_tokens or 0
@@ -73,6 +84,7 @@ def call_metrics(gen, view, budget: int, record: dict) -> dict:
                 "thinking_tokens": thinking,
                 "total_tokens": u.total_tokens,
                 "latency_seconds": gen.latency_seconds,
+                **waiting(gen, wall),
                 "finish_reason": gen.finish_reason,
                 "http_status": gen.http_status,
                 "attempts": len(gen.attempts),
@@ -129,12 +141,14 @@ class ToolAgent:
                 if previous
                 else f"Steps:\n{body}"
             ) + "\n\nWrite the updated summary."
+            t0 = time.monotonic()
             gen = self.provider.generate_text(
                 SUMMARY_SYSTEM,
                 prompt,
                 cfg.summary_max_tokens,
                 estimated_tokens=est.text_tokens(prompt),
             )
+            wall = time.monotonic() - t0
             u = gen.usage
             metrics = {
                 "prompt_tokens": u.prompt_tokens,
@@ -145,6 +159,7 @@ class ToolAgent:
                 "retries": gen.retries,
                 "rate_limited": sum(a.kind == "rate_limited" for a in gen.attempts),
                 "latency_seconds": gen.latency_seconds,
+                **waiting(gen, wall),
                 "finish_reason": gen.finish_reason,
                 "model_version": gen.model_version,
             }
@@ -172,6 +187,7 @@ class ToolAgent:
             for event in view.events:
                 if event.kind != "summary":  # summary events are recorded with their metrics
                     env.record_event(event.kind, event.detail)
+            t0 = time.monotonic()
             try:
                 gen = self.provider.generate(
                     self.system_prompt,
@@ -197,7 +213,7 @@ class ToolAgent:
             record = self.context.estimator.observe(
                 view.raw_estimate, view.estimated_tokens, gen.usage.prompt_tokens
             )
-            metrics = call_metrics(gen, view, budget, record)
+            metrics = call_metrics(gen, view, budget, record, time.monotonic() - t0)
             metrics["extra"]["repogym"]["count_tokens_shadow"] = shadow
             reply = gen.message
             history.append(reply)
