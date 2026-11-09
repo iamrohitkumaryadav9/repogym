@@ -61,13 +61,18 @@ def render_unit(unit: Unit, clip_tokens: int, estimator) -> str:
 
 
 def waiting(gen, wall: float | None) -> dict:
-    """Wall time of the provider call and the part spent waiting (limiter, retry backoff)."""
-    if wall is None:
-        return {}
-    return {
-        "call_wall_seconds": round(wall, 3),
-        "waiting_seconds": round(max(wall - gen.latency_seconds, 0.0), 3),
+    """Throttling inside the provider call (exact, from the provider) and the call's wall time.
+
+    The waiting part is reported to the environment and excluded from the active-time cap (D17).
+    """
+    out = {
+        "limiter_wait_seconds": round(gen.limiter_wait_seconds, 3),
+        "backoff_seconds": round(gen.backoff_seconds, 3),
+        "waiting_seconds": round(gen.wait_seconds, 3),
     }
+    if wall is not None:
+        out["call_wall_seconds"] = round(wall, 3)
+    return out
 
 
 def call_metrics(gen, view, budget: int, record: dict, wall: float | None = None) -> dict:
@@ -149,6 +154,7 @@ class ToolAgent:
                 estimated_tokens=est.text_tokens(prompt),
             )
             wall = time.monotonic() - t0
+            env.record_wait(gen.wait_seconds)
             u = gen.usage
             metrics = {
                 "prompt_tokens": u.prompt_tokens,
@@ -196,6 +202,7 @@ class ToolAgent:
                     estimated_tokens=view.exact_tokens or view.estimated_tokens,
                 )
             except BadResponse as exc:
+                env.record_wait(exc.wait_seconds)
                 # Blocked, truncated or a malformed call: never an action. It counts as a step.
                 done, _ = env.note(
                     f"Your last reply could not be used ({exc}). {NO_TOOL_NUDGE}",
@@ -205,6 +212,8 @@ class ToolAgent:
                 if done:
                     return
                 continue
+            wall = time.monotonic() - t0
+            env.record_wait(gen.wait_seconds)
             shadow = (
                 self.provider.count_tokens(self.system_prompt, view.messages, TOOLS)
                 if self.shadow_count
@@ -213,7 +222,7 @@ class ToolAgent:
             record = self.context.estimator.observe(
                 view.raw_estimate, view.estimated_tokens, gen.usage.prompt_tokens
             )
-            metrics = call_metrics(gen, view, budget, record, time.monotonic() - t0)
+            metrics = call_metrics(gen, view, budget, record, wall)
             metrics["extra"]["repogym"]["count_tokens_shadow"] = shadow
             reply = gen.message
             history.append(reply)

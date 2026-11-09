@@ -94,6 +94,8 @@ class EpisodeState(BaseModel):
     done_reason: str | None = None  # submitted | budget:<name> | error
     started_at: str | None = None
     elapsed_seconds: float = 0.0
+    waiting_seconds: float = 0.0  # reported throttling (record_wait)
+    active_seconds: float = 0.0  # elapsed - waiting: what max_wall_seconds caps
     total_observation_chars: int = 0
     disk_mb: float = 0.0  # container writable layer after the last step
     peak_disk_mb: float = 0.0
@@ -177,7 +179,9 @@ def issue_text(task: ReleaseTask) -> str:
 
 
 class Environment:
-    def __init__(self, task: ReleaseTask, budgets: Budgets | None = None) -> None:
+    def __init__(
+        self, task: ReleaseTask, budgets: Budgets | None = None, clock=time.monotonic
+    ) -> None:
         self.task = task
         self.spec = get_repo(task.repo)
         self.budgets = budgets or Budgets()
@@ -189,7 +193,9 @@ class Environment:
         self.events: list[EventRecord] = []
         self.sandbox: Sandbox | None = None
         self.setup_report: SetupReport | None = None
+        self._clock = clock  # budget clock (injectable for tests)
         self._t0 = 0.0
+        self._waited = 0.0  # reported throttling time, excluded from the active-time cap
         self._tracked: set[str] = set()
         self.probe_info: dict = {}  # history_overlap, filled in during setup
 
@@ -213,7 +219,7 @@ class Environment:
                 self.task.base_commit,
             ).splitlines()
         )
-        self._t0 = time.monotonic()
+        self._t0 = self._clock()
         self._state.started_at = now()
         tools = "\n".join(f"- {t['name']}: {t['description']}" for t in TOOLS)
         text = (
@@ -224,7 +230,10 @@ class Environment:
 
     def state(self) -> EpisodeState:
         if self._t0:
-            self._state.elapsed_seconds = round(time.monotonic() - self._t0, 2)
+            elapsed = self._clock() - self._t0
+            self._state.elapsed_seconds = round(elapsed, 2)
+            self._state.waiting_seconds = round(self._waited, 2)
+            self._state.active_seconds = round(elapsed - self._waited, 2)
         return self._state.model_copy(deep=True)
 
     def step(self, action: Action) -> tuple[Observation, bool, dict]:
@@ -341,6 +350,11 @@ class Environment:
             )
         )
 
+    def record_wait(self, seconds: float) -> None:
+        """Report time the agent spent throttled (rate limiter, retry backoff). It is
+        excluded from the active-time cap and recorded; only max_elapsed_seconds sees it."""
+        self._waited += max(float(seconds or 0.0), 0.0)
+
     def close(self) -> None:
         if self.sandbox is not None:
             self.sandbox.remove()
@@ -409,11 +423,14 @@ class Environment:
     # -- internals ---------------------------------------------------------------------------
 
     def _remaining(self) -> float:
-        return self.budgets.max_wall_seconds - (time.monotonic() - self._t0)
+        return self.budgets.max_wall_seconds - (self._clock() - self._t0 - self._waited)
 
     def _exhausted(self, after_step: bool = False) -> str | None:
         if self._state.step_count >= self.budgets.max_steps and not after_step:
             return "steps"
+        cap = self.budgets.max_elapsed_seconds
+        if cap is not None and self._clock() - self._t0 >= cap:
+            return "elapsed"
         if self._remaining() <= 0:
             return "wall_clock"
         if self._state.total_observation_chars >= self.budgets.max_total_observation_chars:

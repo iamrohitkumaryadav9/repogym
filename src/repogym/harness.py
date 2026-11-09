@@ -107,6 +107,9 @@ def termination_of(record: EpisodeRecord) -> str:
         "submitted": "submitted",
         "budget:steps": "step_cap",
         "budget:wall_clock": "wallclock_cap",
+        # The elapsed safety cap only fires when throttling or an outage stalls an episode
+        # (active time has its own cap), so it is an API failure, retried after reset (D17).
+        "budget:elapsed": "api_failure",
     }.get(record.done_reason or "", "harness_error")
 
 
@@ -235,6 +238,12 @@ def run_episode(
             "completion": record.accounting["output_tokens"] + record.accounting["thinking_tokens"],
         }
         record.cost_usd = record.accounting["cost_usd"]
+        state = env.state()  # D17: active time is capped, waiting is only reported
+        record.accounting["episode_seconds"] = {
+            "elapsed": state.elapsed_seconds,
+            "active": state.active_seconds,
+            "waiting": state.waiting_seconds,
+        }
     record.termination = termination_of(record)
     record.ended_at = now()
     doc = trajectory.build(

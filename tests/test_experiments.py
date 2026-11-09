@@ -299,3 +299,18 @@ def test_budgets_from_the_experiment_file_reach_the_episode(tmp_path):
     budgets, b, strategy = seen[0]
     assert isinstance(budgets, Budgets) and budgets.max_steps == 75
     assert budgets.max_observation_chars == 200000 and b == 11000 and strategy == "obs_mask"
+
+
+def test_elapsed_cap_waits_for_the_reset_and_is_given_up_after_two(tmp_path):
+    exp = write_exp(tmp_path, models=["gemma-4-26b-a4b-it"], tasks=DEV[:1])
+    key = exp.cells()[0].key
+    stalled = {"done_reason": "budget:elapsed", "reward": 0}
+    episodes = FakeEpisodes({key: [stalled, stalled]})
+    sleeps, now = [], 1_800_000_000.0
+    runner(exp, episodes, tmp_path, clock=lambda: now, sleeps=sleeps).run()
+    reset = QuotaLedger(tmp_path / "l.json").next_reset(now)
+    assert episodes.calls == [key, key]  # tried twice, then reported, never forever
+    assert sleeps == [pytest.approx(reset - now + 60)]  # no pointless sleep after giving up
+    records = latest_records(exp.run_dir)[key]
+    assert [r["termination"] for r in records] == ["api_failure", "api_failure"]
+    assert cell_done(records)

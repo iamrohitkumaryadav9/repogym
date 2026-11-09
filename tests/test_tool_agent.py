@@ -92,6 +92,9 @@ class EnvFacade:
     def record_event(self, *args, **kwargs):
         return self._env.record_event(*args, **kwargs)
 
+    def record_wait(self, seconds):
+        return self._env.record_wait(seconds)
+
 
 def agent(script, strategy="obs_mask", budget=12_000, **kw):
     cm = ContextManager(strategy, ContextConfig(budget=budget, **kw), TokenEstimator())
@@ -208,6 +211,8 @@ def test_context_overflow_and_quota_errors_map_to_terminations():
         termination_of(EpisodeRecord(**graded, done_reason="budget:wall_clock")) == "wallclock_cap"
     )
     assert termination_of(EpisodeRecord(**graded, done_reason="budget:disk")) == "harness_error"
+    # The elapsed safety cap only fires when throttling stalls an episode: an API failure (D17).
+    assert termination_of(EpisodeRecord(**graded, done_reason="budget:elapsed")) == "api_failure"
     assert termination_of(EpisodeRecord(**{**base, "status": "setup_error"})) == "harness_error"
 
 
@@ -278,20 +283,98 @@ def test_shadow_count_is_logged_but_never_changes_the_prompt():
     ]
 
 
-def test_waiting_time_outside_the_api_is_recorded_per_call_and_summed():
-    a = agent([reply(("bash", {"command": "ls"})), reply(("submit", {}))])
+# -- D17: the active-time cap excludes throttling; a separate elapsed cap catches hangs ------
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1_000.0
+
+    def __call__(self):
+        return self.t
+
+
+def throttled_run(script, budgets, wait, api_seconds):
+    """Each call is held ``wait`` s by the limiter, then spends ``api_seconds`` on the API."""
+    clock = FakeClock()
+    a = agent(script)
     inner = a.provider.generate
 
-    def slow_generate(*args, **kwargs):  # a limiter wait would look like this
-        import time
+    def generate(*args, **kwargs):
+        gen = inner(*args, **kwargs)
+        gen.limiter_wait_seconds = wait
+        gen.latency_seconds = api_seconds
+        clock.t += gen.wait_seconds + api_seconds  # limiter + backoff (20 s) + API time
+        return gen
 
-        time.sleep(0.6)
+    a.provider.generate = generate
+    env = env_with(budgets)
+    env._clock, env._t0 = clock, clock()
+    a.run(EnvFacade(env), Observation(text="Fix the issue: X is broken."))
+    return a, env
+
+
+def test_long_limiter_waits_never_trigger_the_active_time_cap():
+    script = [reply(("bash", {"command": "ls"})) for _ in range(20)] + [reply(("submit", {}))]
+    budgets = Budgets(max_wall_seconds=600, max_elapsed_seconds=None)
+    a, env = throttled_run(script, budgets, wait=3_000.0, api_seconds=1.0)
+    state = env.state()
+    assert state.done_reason == "submitted" and state.step_count == 21
+    assert state.elapsed_seconds == pytest.approx(21 * 3_021.0)  # ~17.6 h, almost all waiting
+    assert state.waiting_seconds == pytest.approx(21 * 3_020.0)
+    assert state.active_seconds == pytest.approx(21.0)
+    extra = env.steps[0].metrics["extra"]["repogym"]
+    assert extra["limiter_wait_seconds"] == 3_000.0 and extra["backoff_seconds"] == 20.0
+    assert extra["waiting_seconds"] == 3_020.0
+    acct = accounting.summarize(env.steps, env.events, a.model_name)
+    assert acct["waiting_seconds"] == pytest.approx(21 * 3_020.0)
+    assert acct["api_seconds"] == pytest.approx(21.0)
+
+
+def test_active_time_still_caps_slow_episodes_without_throttling():
+    script = [reply(("bash", {"command": "ls"})) for _ in range(20)] + [reply(("submit", {}))]
+    _, env = throttled_run(script, Budgets(max_wall_seconds=600), wait=0.0, api_seconds=100.0)
+    state = env.state()
+    assert state.done_reason == "budget:wall_clock"
+    assert state.active_seconds >= 600 and state.step_count < 21
+
+
+def test_elapsed_safety_cap_ends_a_stalled_episode_as_an_api_failure():
+    script = [reply(("bash", {"command": "ls"})) for _ in range(20)] + [reply(("submit", {}))]
+    budgets = Budgets(max_wall_seconds=600, max_elapsed_seconds=6 * 3600)
+    _, env = throttled_run(script, budgets, wait=3_000.0, api_seconds=1.0)
+    state = env.state()
+    assert state.done_reason == "budget:elapsed" and state.active_seconds < 600
+    assert state.step_count == 7  # the 8th call crosses 6 h (8 x 3,021 s); its action is refused
+
+
+def test_waits_inside_a_bad_response_are_excluded_too():
+    clock = FakeClock()
+    exc = BadResponse("finish_reason SAFETY")
+    exc.wait_seconds = 5_000.0
+    a = agent([exc, reply(("submit", {}))])
+    inner = a.provider.generate
+
+    def generate(*args, **kwargs):
+        if a.provider.script and isinstance(a.provider.script[0], BadResponse):
+            clock.t += 5_000.0
         return inner(*args, **kwargs)
 
-    a.provider.generate = slow_generate
-    env = run(a)
-    extra = env.steps[0].metrics["extra"]["repogym"]
-    assert extra["call_wall_seconds"] >= 0.6
-    assert extra["waiting_seconds"] == pytest.approx(extra["call_wall_seconds"] - 0.5, abs=1e-3)
-    acct = accounting.summarize(env.steps, env.events, a.model_name)
-    assert acct["api_seconds"] == 1.0 and acct["waiting_seconds"] >= 0.2
+    a.provider.generate = generate
+    env = env_with(Budgets(max_wall_seconds=600))
+    env._clock, env._t0 = clock, clock()
+    a.run(EnvFacade(env), Observation(text="Fix the issue: X is broken."))
+    assert env.state().done_reason == "submitted"
+    assert env.state().waiting_seconds >= 5_000.0
+
+
+def test_summary_omitted_events_are_counted_and_typed_in_the_trajectory():
+    from repogym.env.environment import EventRecord
+
+    env = run(agent([reply(("bash", {"command": "ls"})), reply(("submit", {}))]))
+    env.events.append(
+        EventRecord(after_step=1, at="x", kind="summary_omitted", detail={"summary_covers": 3})
+    )
+    acct = accounting.summarize(env.steps, env.events, "gemma-4-26b-a4b-it")
+    assert acct["summary_omitted"] == 1 and acct["summary_omitted_rate"] == 0.5
+    assert trajectory.CONTEXT_TYPES["summary_omitted"] == ("pruning", "truncate")

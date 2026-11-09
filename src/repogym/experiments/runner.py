@@ -8,8 +8,10 @@
   rerun.
 * Pre-registered exclusion rules:
   * a ``harness_error`` episode is rerun exactly once, and both records are kept and reported;
-  * an ``api_failure`` caused by daily quota exhaustion is retried after that model's reset,
-    while the worker sleeps and the other models keep running.
+  * an ``api_failure`` caused by daily quota exhaustion, or by the elapsed safety cap (an
+    episode stalled by throttling, D17), is retried after that model's reset, while the
+    worker sleeps and the other models keep running. A cell that hits the elapsed cap twice
+    is given up on and reported.
 * The guard (test-split protection, pilot hygiene) runs before anything starts.
 """
 
@@ -38,6 +40,8 @@ from repogym.ratelimit import LimitsConfig, QuotaLedger, RateLimiter
 log = structlog.get_logger()
 LEDGER_PATH = DATA_DIR / "quota" / "ledger.json"
 HARNESS_ERROR_RERUNS = 1
+# A cell that hits the elapsed safety cap this often is given up on and reported (D17).
+ELAPSED_CAP_ATTEMPTS = 2
 
 
 def gemini_api_key() -> str:
@@ -66,7 +70,8 @@ def cell_done(records: list[dict]) -> bool:
         return False
     latest = records[-1].get("termination")
     if latest == "api_failure":
-        return False
+        stalled = sum(r.get("done_reason") == "budget:elapsed" for r in records)
+        return stalled >= ELAPSED_CAP_ATTEMPTS
     if latest == "harness_error":
         reruns = sum(r.get("termination") == "harness_error" for r in records)
         return reruns > HARNESS_ERROR_RERUNS
@@ -174,10 +179,17 @@ class Runner:
             )
             if self.on_done:
                 self.on_done(record)
-            if record.error_type == "DailyQuotaExhausted":
+            # Daily quota, or an episode stalled past the elapsed safety cap by throttling:
+            # wait for this model's reset, then retry (pre-registered exclusion rules, D16/D17).
+            retry = not cell_done(latest_records(self.experiment.run_dir).get(cell.key, []))
+            if not retry:
+                continue
+            if record.error_type == "DailyQuotaExhausted" or record.done_reason == "budget:elapsed":
                 reset = self.ledger.next_reset(self.clock())
                 wait = max(reset - self.clock(), 0) + 60
-                log.warning("daily_quota_sleep", model=model, seconds=round(wait))
+                log.warning(
+                    "sleep_until_reset", model=model, seconds=round(wait), why=record.done_reason
+                )
                 self.sleep(wait)
             elif record.termination == "api_failure":
                 self.sleep(60)  # per-minute exhaustion or an outage: brief pause, then retry

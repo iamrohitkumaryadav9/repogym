@@ -7,7 +7,12 @@ from pydantic import BaseModel
 
 class Budgets(BaseModel):
     max_steps: int = 100
+    # Active time: elapsed time minus waiting the agent reports via record_wait (rate limiter,
+    # retry backoff), so free-tier throttling can't end an episode (D17).
     max_wall_seconds: float = 1800
+    # Total elapsed time including waits: only a hung-episode safety net. Hitting it is an
+    # api_failure, never an agent outcome. None = off (Week 2 runs).
+    max_elapsed_seconds: float | None = None
     max_total_observation_chars: int = 1_000_000
     command_timeout_seconds: float = 120
     run_tests_timeout_seconds: float = 300

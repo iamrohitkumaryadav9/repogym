@@ -82,17 +82,21 @@ def summarize(steps, events, model: str | None, prices: dict | None = None) -> d
             else round(sum(costs), 6),
         }
 
+    omitted = sum(e.kind == "summary_omitted" for e in events)
     errors = [c["estimation_error"] for c in agent_calls if c.get("estimation_error") is not None]
     return {
         **totals(calls),
         "summary_overhead": totals(summary_calls),
         "budget_violations": sum(bool(c.get("budget_violation")) for c in agent_calls),
+        # Prompts that had to leave the stored summary out to fit B (D18); a validity signal.
+        "summary_omitted": omitted,
+        "summary_omitted_rate": round(omitted / len(agent_calls), 4) if agent_calls else None,
         "estimation_error_mean": round(sum(errors) / len(errors), 4) if errors else None,
         "estimation_error_max_under": round(min(errors), 4) if errors else None,
         "retries": sum(c.get("retries", 0) for c in calls),
         "rate_limited_attempts": sum(c.get("rate_limited", 0) for c in calls),
-        # Time inside provider calls not spent on the API itself: limiter waits and retry
-        # backoff. It counts toward the wall-clock cap (D17).
+        # Throttling inside provider calls (limiter waits + retry backoff). Reported only:
+        # it is excluded from the active-time cap (D17).
         "waiting_seconds": round(sum(c.get("waiting_seconds") or 0.0 for c in calls), 1),
         "api_seconds": round(sum(c.get("latency_seconds") or 0.0 for c in calls), 1),
     }
