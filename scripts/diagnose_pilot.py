@@ -86,7 +86,9 @@ def analyse(key, record):
     rt_clipped = [r for r in rt if r["raw"] > CLIP_CHARS]
     no_tool = [r for r in rows if r["tool"] is None]
     task = TASKS[record["task_id"]]
-    diff = (RUN / "diffs" / f"{key}.diff").read_text() if (RUN / "diffs" / f"{key}.diff").exists() else ""
+    stem = Path(record["trajectory"]).stem  # <cell>__a<n> since attempts are numbered
+    diff_path = RUN / "diffs" / f"{stem}.diff"
+    diff = diff_path.read_text() if diff_path.exists() else ""
     diff_files = sorted(set(re.findall(r"^diff --git a/(\S+)", diff, re.M)))
     g = record.get("grade") or {}
     out = {
