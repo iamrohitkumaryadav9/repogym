@@ -189,6 +189,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
   Naive estimates under-count badly, so the estimator starts conservative and is calibrated
   online (D15).
 
+*Superseded 2026-11-09 by D20 (no `countTokens` in runs) and D21 (Gemma's re-billed thinking).*
+
 ## D14. Clipping and masking are prompt-only; trajectories store full observations
 
 * **Context.** Analysis must be able to reconstruct both what the tool returned and what the
@@ -261,6 +263,22 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     * An `api_failure` from daily-quota exhaustion makes that model's worker sleep until the
       next midnight-Pacific reset plus 60 s, while the other models continue.
     * Any other `api_failure` pauses the worker for 60 s, then retries.
+    * *Amended 2026-11-09 (Gate 1 decision).* A cell gets **at most 3 `api_failure`
+      attempts**. After the third it is recorded as `api_failure`, reported, and not retried.
+      Daily-quota interruptions don't count toward the 3, because they come from our own quota
+      scheduling, not the model; they're retried after the reset. The elapsed safety cap
+      (D17) counts toward the 3.
+  * *Amended 2026-11-09.* **Every attempt is kept.**
+    * Each attempt has an index (`attempt`), and its trajectory and diff are named
+      `<cell>__a<n>`. A name collision of any kind gets a suffix, so no file is ever
+      overwritten. (The pilot's 31B rerun had overwritten attempt 1's trajectory.)
+    * Each record's provenance lists the earlier attempts: index, episode id, termination,
+      error type, steps, trajectory. `repogym status` reports attempts, cells retried and
+      cells given up.
+  * *Amended 2026-11-09.* **Heartbeat.** Each worker keeps `heartbeat/<model>.json` with its
+    state (running, between episodes, sleeping until a time and why, done), the cell and
+    attempt, the current step, and the time of the last model call. `repogym status` shows
+    it, so a running episode is visible before its record exists.
   * Each model has one worker, so at most 3 episodes, and 3 sandbox containers, run at once.
     That fits 7.7 GiB alongside Docker Desktop, and the free-tier limits are per model anyway,
     so more workers per model would only queue on the limiter.
@@ -341,4 +359,148 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     response is a larger B or a shorter summary, decided before any test-split run.
 * **Consequences.** The reported success rate for a summarising strategy always comes with how
   often it actually ran as specified.
+
+## D19. Agent fixes from the pilot diagnosis (approved at Gate 1)
+
+* **Context.** In the first pilot, all 5 episodes reached the step cap without a source edit
+  (Gate 1 report, section 5):
+  * no reply contained any reasoning text;
+  * 400-line `view_file` windows lost their middle to the 2,000-token clip;
+  * repeats followed masking of the earlier result;
+  * the first message described the 200,000-character storage cap as if it were the model's
+    view.
+* **Decision.**
+  * **Reasoning.** The system prompt asks for one or two sentences with every tool call: what
+    was learned, and what comes next. It explains that the agent's own messages outlive tool
+    results.
+    * A reply with a call but no text is **not rejected**: the call runs, and a
+      `missing_reasoning` event is recorded with its streak.
+    * After every second consecutive miss, the next tool result carries one short reminder (a
+      `reasoning_reminder` event).
+    * Both are counted per episode: `missing_reasoning`, `missing_reasoning_rate` per call,
+      and `reasoning_reminders`.
+  * **An accurate view description.** The system prompt is generated per strategy from the
+    context configuration. It covers:
+    * the clip size;
+    * masking after M results (`obs_mask`, `hybrid`);
+    * oldest steps removed (`sliding_window`, and the fallback);
+    * the summary (`llm_summary`, `hybrid`).
+
+    The environment's first message for this agent (`instruction_style="tool_agent"`) states
+    active time and leaves out the storage cap. The Week 2 text is unchanged and tested.
+  * **Step budget.** `[step k/N]` follows the last result of each reply, plus one nudge when 15
+    calls remain (a `final_steps_nudge` event). These annotations are part of what the model
+    sees. The stored observation is the environment's, unannotated (D14).
+  * **`view_file`** shows at most 150 lines, about what the clip keeps.
+  * All of these texts are in the resolved config (`prompts`) and frozen with it.
+* **Consequences.**
+  * Week 3 results come from this agent version. The first pilot is a diagnostic only.
+  * The Week 2 bash agent and its prompt are untouched. `view_file` isn't one of its tools.
+
+## D20. countTokens is never used in timed runs; our ledger counts our requests
+
+*Decided 2026-11-09 (operator).*
+
+* **Context.**
+  * D13 proposed exact pre-call counts for Gemma.
+  * The pilot showed the exact relation instead: billed prompt = counted tokens + Gemma's
+    re-billed thinking (D21). So the estimator can be made accurate without calling
+    `countTokens`.
+  * A TPM charge for `countTokens` would roughly halve Gemma's throughput. RPD alone was never
+    the concern.
+* **Decision.**
+  * No `countTokens` call in the agent loop or in any timed run. An experiment whose model
+    settings ask for anything but `token_counting: estimate` is refused at load time.
+    `countTokens` stays available for offline validation of the estimator.
+  * **Our local quota ledger is the source of truth for our own request counts.** It counts
+    every attempt that goes through the limiter, failed ones included.
+* **Dashboard cross-check** (operator, 28-day peaks covering today):
+
+  | Model | Dashboard RPD | Ledger | − 18 blocked locally (never sent) | + requests sent outside the limiter | Expected | Difference |
+  |---|---|---|---|---|---|---|
+  | gemini-3.5-flash-lite | 247 | 252 | 234 | +13 | **247** | 0 |
+  | gemma-4-26b-a4b-it | 168 | 184 (13:02 UTC) | 166 | +10 | 176 | −8 |
+  | gemma-4-31b-it | 159 | 172 (13:02 UTC) | 154 | +8 | 162 | −3 |
+
+  * **Where the extra requests come from:**
+    * the morning API probes: 8 generation calls per model, sent directly through the SDK;
+    * for Flash-Lite, 5 debugging calls;
+    * for 26B, 2 prototype calls.
+  * **The ledger over-counts by 18 requests per model.** These were the first live-test run's
+    attempts, which the unit-test network guard blocked before they left the machine.
+  * **Flash-Lite matches exactly.** Its count stopped changing at 11:35 UTC, so this comparison
+    doesn't depend on when the dashboard was read.
+  * **The two Gemma differences fit a dashboard reading about 5–10 minutes before 13:02.**
+    Both were still sending requests at 0.7–1.3 per minute. There's no sign of
+    double-counting.
+  * **`countTokens` doesn't count toward RPD.**
+    * Flash-Lite made 25 `countTokens` calls today, and its count still matches exactly.
+    * 26B made about 165 (probes, a 30-call burst, and the pilot's shadow counts), and its
+      dashboard RPD of 168 is lower than its generation requests alone.
+* **TPM cross-check.**
+  * The dashboard shows peaks of 19.65K (26B) and 18.34K (31B) against 16K.
+  * Rebuilt per calendar minute from the pilot trajectories (`scripts/pilot_quota_analysis.py`):
+    * 26B went over in 3 of 72 minutes. Each time it was a **single** call, the largest
+      reporting 16,943 tokens against an estimate under 12,000. The gap was re-billed
+      thinking (D21).
+    * The dashboard's higher peaks likely include the input of failed (5xx) attempts, which
+      aren't in trajectories.
+    * 31B's server errors are **not** quota-related: 0 of 17 came in a minute already over the
+      limit; they came at the start of a minute with nothing else sent yet.
+  * **The fix.**
+    * The limiter already admits on the pre-call estimate and settles with the reported tokens.
+    * Its admission estimate now includes re-billed thinking (D21), so no prompt can exceed
+      B = 12,000. That is below 16K × 0.9 = 14,400.
+    * The reservation for a failed attempt stays in the window, so a retry within the same
+      minute waits instead of doubling the input.
+
+## D21. Gemma's earlier thinking is kept in the history and counted exactly
+
+*Measured 2026-11-09; evidence in `docs/week3/evidence/thinking_history_gemma-4-26b-a4b-it.json`,
+`scripts/probe_thinking_history.py`.*
+
+* **Context.**
+  * Gemma's replies contain a `text` part marked `thought: true` (its reasoning), next to the
+    `function_call` part with its signature. We replay replies verbatim (D12).
+  * In the pilot, the billed prompt exceeded `countTokens` by exactly the thinking tokens of
+    the kept replies (+1), on all 75 calls.
+* **Experiment.** The same third call of a real 2-step tool-calling episode on 26B, in six
+  variants:
+
+  | Variant | HTTP | Billed prompt tokens |
+  |---|---|---|
+  | A: full replay | 200 | 3,139 |
+  | B: older signature replaced by the documented dummy | 200 (500 in one of three runs) | 3,139 |
+  | C: all signatures replaced by the dummy | 200 | 3,139 |
+  | D: older signature removed | 200 | 3,139 |
+  | **E: thought parts dropped from both earlier replies, signatures kept** | 200 | **631** |
+  | **F: thought part dropped from the older reply only** | 200 | **651** |
+
+  * The earlier replies had thought 1,244 and 10 tokens.
+  * Dropping the thought text saves exactly **2 × its thinking tokens** (2,508 and 2,488).
+    The signatures don't affect billing.
+  * Without its earlier thoughts, the model thought more on the next call (899 and 409 tokens
+    against 10).
+* **What the docs say.**
+  * Gemini thinking docs: "Return the entire response with all parts back to the model". Only
+    function-call signatures are strictly required.
+  * **Gemma 4 model card**
+    (https://ai.google.dev/gemma/docs/core/model_card_4, "Multi-Turn Conversations", checked
+    2026-11-09): "Thoughts from previous model turns must not be added before the next user
+    turn begins, **with the exception of tool call turns where thinking content should be
+    preserved**."
+  * Our episode is a single tool-calling turn (D12), so the model card says to keep the
+    thoughts.
+* **Decision.** Removal works technically, but the docs say to preserve thinking in tool-call
+  turns, so we **keep the thought parts and count them exactly**:
+  * each Gemma reply with a thought part carries `replay_tokens = 2 × thinking_tokens`;
+  * the estimator adds that unscaled to every prompt containing the reply, and calibration
+    sees only the text part;
+  * the limiter admits on that estimate.
+* **Consequences.**
+  * Under B, Gemma's retained thinking competes with observations for room, so the drop
+    fallback fires earlier for Gemma than for Flash-Lite. This is reported as a property of
+    the setup, not hidden.
+  * Lowering Gemma's thinking level (`minimal` is accepted) would free budget, but it changes a
+    pinned vendor default (D10). It is not proposed.
 
