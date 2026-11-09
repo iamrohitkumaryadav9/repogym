@@ -24,3 +24,12 @@ models:
     sampling: {temperature: 1.0, top_p: 0.95, top_k: 64}
     thinking_level: null
     max_output_tokens: 8192
+  # Candidate replacement for gemma-4-31b-it (pilot only). ID verified with models.list on
+  # 2026-11-09: models/gemini-3.1-flash-lite, version 3.1-flash-lite-05-2026 (stable; a
+  # -preview also exists). Thinking per D22: the Gemini docs' recommendation for coding tasks
+  # is high; "Gemini 3.5 & 3.1 Flash-Lite" support minimal (default), low, medium, high.
+  gemini-3.1-flash-lite:
+    provider: gemini
+    sampling: {}
+    thinking_level: high
+    max_output_tokens: 8192

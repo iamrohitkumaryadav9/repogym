@@ -13,7 +13,7 @@ from repogym.experiments.runner import Runner, cell_done, latest_records
 from repogym.experiments.spec import ExperimentError, load, max_clip_chars, sha256_bytes
 from repogym.experiments.status import summary
 from repogym.harness import EpisodeRecord, _finish
-from repogym.ratelimit import QuotaLedger
+from repogym.ratelimit import LimitsConfig, QuotaLedger
 
 DEV = ["python-attrs__attrs-1448", "pallets__click-3504"]
 TEST = ["python-attrs__attrs-1457"]
@@ -436,3 +436,14 @@ def test_retry_thresholds_are_preregistered_hashed_and_overridable(tmp_path):
     changed = write_exp(tmp_path, retry={"server_max_seconds": 1800})
     assert changed.retry.server_max_seconds == 1800 and changed.retry.pause_on_daily is True
     assert changed.resolved_sha256 != exp.resolved_sha256
+
+
+def test_the_gemini31_pilot_matches_the_repilot_tasks_at_high_thinking(tmp_path):
+    root = Path(__file__).parents[1] / "configs" / "experiments"
+    g31, repilot = load(root / "pilot_gemini31.yaml"), load(root / "repilot.yaml")
+    assert g31.kind == "pilot" and g31.models == ["gemini-3.1-flash-lite"]
+    assert g31.task_ids == repilot.task_ids
+    assert g31.model_settings["gemini-3.1-flash-lite"]["thinking_level"] == "high"
+    check(g31, tmp_path / "none.md", tmp_path, final=False)
+    limits = LimitsConfig.load(g31.limits_path).effective("gemini-3.1-flash-lite")
+    assert limits == {"rpm": 13, "tpm": 225000, "rpd": 450}

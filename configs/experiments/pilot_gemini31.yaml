@@ -1,0 +1,30 @@
+# Pilot of gemini-3.1-flash-lite, a candidate replacement for gemma-4-31b-it (Gate 1 decision).
+# Same 3 dev tasks as the re-pilot, for a direct comparison. Dev tasks only; tagged pilot in
+# provenance; excluded from every later analysis. Thinking at the vendor-recommended setting for
+# coding tasks (D22: high), pinned in configs/models.yaml. Its own quota (500 RPD), so it runs in
+# parallel with the 3.5 Flash-Lite re-pilot from the 08:05 UTC reset on 2026-11-10.
+name: week3-pilot-gemini31
+kind: pilot
+split: dev
+release: v0.1
+tasks:
+  - python-attrs__attrs-1448
+  - python-poetry__tomlkit-536
+  - pallets__click-3504
+models:
+  - gemini-3.1-flash-lite
+strategies: [obs_mask]
+repeats: 1
+context:
+  budget: 12000
+  clip_tokens: 2000
+  keep_observations: 5
+  keep_recent_units: 4
+  summary_trigger: 0.8
+  summary_max_tokens: 1000
+budgets:
+  max_steps: 75
+  max_wall_seconds: 3600  # active time only (D17)
+  max_elapsed_seconds: 21600
+  max_observation_chars: 200000
+  max_total_observation_chars: 20000000

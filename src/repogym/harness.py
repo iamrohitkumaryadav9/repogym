@@ -153,6 +153,7 @@ def run_episode(
     episode_key: str | None = None,
     experiment: dict | None = None,
     attempt: int | None = None,
+    on_env: Callable[[Environment], None] | None = None,
 ) -> EpisodeRecord:
     manifest = json.loads((RELEASE_DIR / release / "manifest.json").read_text())
     commit, dirty = repogym_commit()
@@ -188,6 +189,8 @@ def run_episode(
         return _finish(record, run_dir)
     try:
         first = env.reset()
+        if on_env is not None:  # e.g. the runner records the container name (RUNBOOK)
+            on_env(env)
     except EnvSetupError as exc:
         record.error = str(exc)[:4000]
         env.close()

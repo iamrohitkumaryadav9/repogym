@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -73,6 +74,9 @@ class Heartbeat:
             last_model_call_at=None,
         )
 
+    def container(self, name: str) -> None:
+        self._write(container=name)
+
     def progress(self, step: int) -> None:
         self._write(step=step, last_model_call_at=self.clock())
 
@@ -84,6 +88,26 @@ class Heartbeat:
 
     def finished(self) -> None:
         self._write(state="done")
+
+
+def write_pid_file(run_dir: Path, models: list[str]) -> Path:
+    """Record this runner's PID and process group in the run directory, so it can be stopped by
+    exactly that process group (never by a name pattern; RUNBOOK)."""
+    path = run_dir / "pids" / f"runner-{'+'.join(models)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "pgid": os.getpgid(0),
+                "models": models,
+                "argv": sys.argv,
+                "started_at": time.time(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def gemini_api_key() -> str:
@@ -251,6 +275,7 @@ class Runner:
                 episode_key=cell.key,
                 experiment=provenance(self.experiment, cell, previous),
                 attempt=attempt,
+                on_env=lambda env: beat.container(env.sandbox.name),
             )
             beat.idle(record.termination)
             if self.on_done:
@@ -278,9 +303,11 @@ class Runner:
         unknown = sorted(set(models or []) - set(self.experiment.models))
         if unknown:
             raise ValueError(f"models not in the experiment: {unknown}")
+        selected = models or self.experiment.models
+        pid_file = write_pid_file(self.experiment.run_dir, selected)
         threads = [
             threading.Thread(target=self.worker, args=(m,), name=f"worker-{m}", daemon=True)
-            for m in (models or self.experiment.models)
+            for m in selected
         ]
         for t in threads:
             t.start()
@@ -290,3 +317,6 @@ class Runner:
         except KeyboardInterrupt:
             self.stop.set()
             raise
+        finally:
+            info = json.loads(pid_file.read_text(encoding="utf-8"))
+            pid_file.write_text(json.dumps(info | {"ended_at": time.time()}), encoding="utf-8")
