@@ -1,0 +1,11 @@
+# List prices for a paid-tier-equivalent cost (we use the free tier only; nothing is billed).
+# Source: https://aistudio.google.com/docs/pricing.md, "Gemini 3.5 Flash-Lite", Standard, paid tier,
+# per 1M tokens in USD. Checked 2026-11-09. Output price includes thinking tokens.
+# Gemma has no comparable list price on this API: tokens only.
+source: "https://aistudio.google.com/docs/pricing.md"
+checked: "2026-11-09"
+usd_per_million_tokens:
+  gemini-3.5-flash-lite:
+    input: 0.30
+    output_including_thinking: 2.50
+    cached_input: 0.03
