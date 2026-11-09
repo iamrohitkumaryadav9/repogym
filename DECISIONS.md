@@ -256,21 +256,71 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
   `harness_error` is excluded from success rates and listed separately. Pilot records
   (`experiment.pilot = true`) are excluded from all later analysis.
 
-## D17. Episode limits: 75 steps, a wall-clock safety cap that includes rate-limit waits
+## D17. Episode limits: 75 steps; the wall-clock cap counts active time only
 
 * **Context.**
-  * The brief fixes a step cap of 75. The environment's wall-clock budget is measured from
-    episode start on a monotonic clock, so it includes time the agent spends waiting on the rate
-    limiter.
-  * Under Gemma's 16K TPM (D11), late-episode calls near B = 12,000 admit about one per minute.
-    So a 75-step episode can take more than an hour of mostly waiting.
+  * The brief fixes a step cap of 75 and asks for a wall-clock cap.
+  * Free-tier throttling is very uneven across models. Under Gemma's 16K input TPM (D11),
+    late-episode calls near B = 12,000 admit about one per minute, while Flash-Lite (250K TPM)
+    rarely waits at all.
+  * A cap on elapsed time would end Gemma episodes because of free-tier throttling, not agent
+    behaviour. That confounds RQ2 (models), and also RQ1, because strategies with larger
+    prompts wait longer for TPM.
+* **Options.**
+  1. Cap elapsed time.
+  2. Cap active time only.
+  3. No time cap.
+* **Decision.** (2), plus a separate safety net:
+  * **Active time** is what `max_wall_seconds` caps. It's elapsed time minus throttling the
+    agent reports through `env.record_wait`: model response latency, tool and test execution,
+    and harness overhead.
+    * The provider measures throttling exactly: the rate limiter's `acquire` returns how long it
+      held the request, and retry backoff comes from the attempt log. `latency_seconds` is now
+      API time only, with both removed.
+    * Waits inside a call that ends in `BadResponse` are reported too.
+  * **Waiting time** is recorded per call (`limiter_wait_seconds`, `backoff_seconds`,
+    `waiting_seconds`, `call_wall_seconds`) and per episode
+    (`accounting.waiting_seconds`, `api_seconds`, and
+    `accounting.episode_seconds.{elapsed,active,waiting}`). It is reported only and never
+    used for termination.
+  * **`max_elapsed_seconds`** (6 h in Week 3 experiments; off for Week 2 runs) catches hung
+    episodes. It can only fire when throttling or an outage stalls an episode, since active
+    time has its own cap. So hitting it is classified as `api_failure`, never an agent outcome.
+    * The runner retries the cell after that model's quota reset (D16).
+    * After two elapsed-cap episodes, the cell is given up on and reported.
+  * `max_steps = 75`. The pilot runs with an active-time cap of 3,600 s. The E1–E3 value is
+    proposed at Gate 1 from the pilot's active-time distribution, set high enough to rarely
+    bind.
+  * Fake-clock unit tests show three things:
+    * 21 calls each held 3,000 s by the limiter (about 17.6 h elapsed, 21 s active) still end
+      `submitted` under a 600 s active cap;
+    * slow API time without throttling still hits the active cap;
+    * the 6 h elapsed cap ends a stalled episode, which maps to `api_failure`.
+* **Consequences.**
+  * `wallclock_cap` now means the agent itself was slow. It is reported per model and strategy.
+  * Elapsed and waiting time are reported as throughput costs, for example to explain why
+    Gemma runs take longer, but never count against success.
+  * The environment's tool-command timeouts still use the remaining active time.
+
+## D18. When a prompt leaves the summary out, it is recorded, counted and reported
+
+* **Context.**
+  * With `llm_summary` or `hybrid`, the context manager may, as a last resort, leave the
+    stored summary out of one prompt so it fits B (found by the property test; see the
+    strategies code).
+  * The model then sees less than the strategy promises. If this happens often, the strategy
+    being measured isn't really `llm_summary`.
 * **Decision.**
-  * `max_steps = 75`.
-  * The wall-clock cap is a safety net against hung episodes, not an experimental variable. The
-    pilot uses 3,600 s and records how long episodes take and how much of that is limiter sleep.
-  * The E1–E3 value is proposed at Gate 1 from those measurements. It is set high enough that it
-    essentially never binds, because a binding cap would penalise strategies whose larger prompts
-    wait longer for TPM. That would confound RQ1 with throughput.
-* **Consequences.** `wallclock_cap` terminations are reported per strategy. Any at all in E1 is
-  a red flag to be discussed, not quietly absorbed.
+  * Each occurrence emits a `summary_omitted` context event in the trajectory, an ATIF system
+    step of type `pruning`/`truncate`.
+  * The accounting counts it per episode (`summary_omitted`), with its rate per agent call
+    (`summary_omitted_rate`), alongside `budget_violations`.
+  * `repogym status` shows it, and the analysis reports its frequency per strategy and model
+    in RESULTS.md next to budget violations.
+  * **Threshold.** If it occurs in more than **2%** of the agent calls of any `llm_summary` or
+    `hybrid` cell group, it is flagged at the next gate (Gate 1 for the pilot, Gate 2 for E1,
+    Gate 3 for E3) as a threat to validity. It is not absorbed silently, and the proposed
+    response is a larger B or a shorter summary, decided before any test-split run.
+* **Consequences.** The reported success rate for a summarising strategy always comes with how
+  often it actually ran as specified.
 
