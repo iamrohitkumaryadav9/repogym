@@ -1,0 +1,289 @@
+{
+ "schema_version": "ATIF-v1.8",
+ "session_id": "week3-dev-oracle",
+ "trajectory_id": "d513b7b30b360485",
+ "agent": {
+  "name": "repogym-oracle",
+  "version": "1.0",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "Run a bash command in the repository directory (/work) and return its exit code, stdout and stderr. Commands are killed after the per-command timeout. There is no network access.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "command": {
+        "type": "string",
+        "description": "The command to run."
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "view_file",
+     "description": "Show a file with line numbers. Paths are relative to /work. At most 400 lines per call; use start_line and end_line to page through longer files.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "end_line": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "str_replace",
+     "description": "Replace one exact occurrence of `old` with `new` in a file. `old` must match exactly once, including whitespace and indentation.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "old": {
+        "type": "string"
+       },
+       "new": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "old",
+       "new"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_file",
+     "description": "Create a file (or overwrite it) with the given content. Paths are under /work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "run_tests",
+     "description": "Run tests with pytest. `target` is a test file or node id (path::test_name) that exists in the repository at the start of the task. Use bash to run tests you add.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "target"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "submit",
+     "description": "Finish the task. Your changes to /work are graded after this.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    }
+   }
+  ]
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-09T10:32:11.505Z",
+   "source": "system",
+   "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-09T10:32:11.505Z",
+   "source": "user",
+   "message": "# Is the _HAS_DEFAULT_FACTORY here expected?\n\nThe following code outputs a `_HAS_DEFAULT_FACTORY`, which doesn't seem to be what I expected:\n\n```python\nimport astroid\n\nnode = astroid.parse(\n    \"\"\"\n    from dataclasses import dataclass\n\n    @dataclass\n    class A:\n        pass\n    \"\"\")\n\nprint(node.locals)\n# {'A': [<ClassDef.A l.5 at 0x26f9601b7a0>], \n# 'dataclass': [<ImportFrom l.2 at 0x26f953f3ed0>], \n# '_HAS_DEFAULT_FACTORY': [<AssignName._HAS_DEFAULT_FACTORY l.1 at 0x26f9603ecd0>]}\n```\n\nThe `_HAS_DEFAULT_FACTORY` seems to be related to `@dataclass`, but I haven't found out why it exists here.\n\nI also tried the following script, and it won't include `_HAS_DEFAULT_FACTORY`:\n\n```python\nfrom dataclasses import dataclass\n\n@dataclass\nclass A:\n    pass\n\nprint(locals().keys())\n# dict_keys(['__name__', '__doc__', '__package__', \n# '__loader__', '__spec__', '__annotations__', \n# '__builtins__', '__file__', '__cached__', \n# 'dataclass', 'A'])\n```\n\n(python 3.13.5, astroid 3.3.11)"
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-09T10:32:11.505Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_1",
+      "content": "overwrote astroid/brain/brain_dataclasses.py (668 lines)"
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.32,
+     "raw_chars": 56
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_1",
+     "function_name": "create_file",
+     "arguments": {
+      "path": "astroid/brain/brain_dataclasses.py",
+      "content": "# Licensed under the LGPL: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html\n# For details: https://github.com/pylint-dev/astroid/blob/main/LICENSE\n# Copyright (c) https://github.com/pylint-dev/astroid/blob/main/CONTRIBUTORS.txt\n\n\"\"\"\nAstroid hook for the dataclasses library.\n\nSupport built-in dataclasses, pydantic.dataclasses, and marshmallow_dataclass-annotated\ndataclasses. References:\n- https://docs.python.org/3/library/dataclasses.html\n- https://pydantic-docs.helpmanual.io/usage/dataclasses/\n- https://lovasoa.github.io/marshmallow_dataclass/\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Iterator\nfrom typing import Literal\n\nfrom astroid import bases, context, nodes\nfrom astroid.brain.helpers import is_class_var\nfrom astroid.builder import parse\nfrom astroid.const import PY313_PLUS\nfrom astroid.exceptions import (\n    AstroidSyntaxError,\n    InferenceError,\n    MroError,\n    UseInferenceDefault,\n)\nfrom astroid.inference_tip import inference_tip\nfrom astroid.manager import AstroidManager\nfrom astroid.typing import InferenceResult\nfrom astroid.util import Uninferable, UninferableBase, safe_infer\n\n_FieldDefaultReturn = (\n    None\n    | tuple[Literal[\"default\"], nodes.NodeNG]\n    | tuple[Literal[\"default_factory\"], nodes.Call]\n)\n\nDATACLASSES_DECORATORS = frozenset((\"dataclass\",))\nFIELD_NAME = \"field\"\nDATACLASS_MODULES = frozenset(\n    (\"dataclasses\", \"marshmallow_dataclass\", \"pydantic.dataclasses\")\n)\nDEFAULT_FACTORY = \"_HAS_DEFAULT_FACTORY\"  # based on typing.py\n\n\ndef is_decorated_with_dataclass(\n    node: nodes.ClassDef, decorator_names: frozenset[str] = DATACLASSES_DECORATORS\n) -> bool:\n    \"\"\"Return True if a decorated node has a `dataclass` decorator applied.\"\"\"\n    if not (isinstance(node, nodes.ClassDef) and node.decorators):\n        return False\n\n    return any(\n        _looks_like_dataclass_decorator(decorator_attribute, decorator_names)\n        for decorator_attribute in node.decorators.nodes\n    )\n\n\ndef dataclass_transform(node: nodes.ClassDef) -> nodes.ClassDef | None:\n    \"\"\"Rewrite a dataclass to be easily understood by pylint.\"\"\"\n    node.is_dataclass = True\n\n    for assign_node in _get_dataclass_attributes(node):\n        name = assign_node.target.name\n\n        rhs_node = nodes.Unknown(\n            lineno=assign_node.lineno,\n            col_offset=assign_node.col_offset,\n            parent=assign_node,\n        )\n        rhs_node = AstroidManager().visit_transforms(rhs_node)\n        node.instance_attrs[name] = [rhs_node]\n\n    if not _check_generate_dataclass_init(node):\n        return None\n\n    kw_only_decorated = False\n    if node.decorators.nodes:\n        for decorator in node.decorators.nodes:\n            if not isinstance(decorator, nodes.Call):\n                kw_only_decorated = False\n                break\n            for keyword in decorator.keywords:\n                if keyword.arg == \"kw_only\":\n                    kw_only_decorated = keyword.value.bool_value() is True\n\n    init_str = _generate_dataclass_init(\n        node,\n        list(_get_dataclass_attributes(node, init=True)),\n        kw_only_decorated,\n    )\n\n    try:\n        init_node = parse(init_str)[\"__init__\"]\n    except AstroidSyntaxError:\n        pass\n    else:\n        init_node.parent = node\n        init_node.lineno, init_node.col_offset = None, None\n        node.locals[\"__init__\"] = [init_node]\n\n        root = node.root()\n        if DEFAULT_FACTORY in init_str and DEFAULT_FACTORY not in root.locals:\n            new_assign = parse(f\"{DEFAULT_FACTORY} = object()\").body[0]\n            new_assign.parent = root\n            root.locals[DEFAULT_FACTORY] = [new_assign.targets[0]]\n    return node\n\n\ndef _get_dataclass_attributes(\n    node: nodes.ClassDef, init: bool = False\n) -> Iterator[nodes.AnnAssign]:\n    \"\"\"Yield the AnnAssign nodes of dataclass attributes for the node.\n\n    If init is True, also include InitVars.\n    \"\"\"\n    for assign_node in node.body:\n        if not (\n            isinstance(assign_node, nodes.AnnAssign)\n            and isinstance(assign_node.target, nodes.AssignName)\n        ):\n            continue\n\n        # Annotation is never None\n        if is_class_var(assign_node.annotation):  # type: ignore[arg-type]\n            continue\n\n        if _is_keyword_only_sentinel(assign_node.annotation):\n            continue\n\n        # Annotation is never None\n        if not init and _is_init_var(assign_node.annotation):  # type: ignore[arg-type]\n            continue\n\n        yield assign_node\n\n\ndef _check_generate_dataclass_init(node: nodes.ClassDef) -> bool:\n    \"\"\"Return True if we should generate an __init__ method for node.\n\n    This is True when:\n        - node doesn't define its own __init__ method\n        - the dataclass decorator was called *without* the keyword argument init=False\n    \"\"\"\n    if \"__init__\" in node.locals:\n        return False\n\n    found = None\n\n    for decorator_attribute in node.decorators.nodes:\n        if not isinstance(decorator_attribute, nodes.Call):\n            continue\n\n        if _looks_like_dataclass_decorator(decorator_attribute):\n            found = decorator_attribute\n\n    if found is None:\n        return True\n\n    # Check for keyword arguments of the form init=False\n    return not any(\n        keyword.arg == \"init\"\n        and keyword.value.bool_value() is False  # type: ignore[union-attr] # value is never None\n        for keyword in found.keywords\n    )\n\n\ndef _find_arguments_from_base_classes(\n    node: nodes.ClassDef,\n) -> tuple[\n    dict[str, tuple[str | None, str | None]], dict[str, tuple[str | None, str | None]]\n]:\n    \"\"\"Iterate through all bases and get their typing and defaults.\"\"\"\n    pos_only_store: dict[str, tuple[str | None, str | None]] = {}\n    kw_only_store: dict[str, tuple[str | None, str | None]] = {}\n    # See TODO down below\n    # all_have_defaults = True\n\n    try:\n        mro = node.mro()\n    except MroError:\n        return pos_only_store, kw_only_store\n\n    for base in reversed(mro):\n        if not base.is_dataclass:\n            continue\n        try:\n            base_init: nodes.FunctionDef = base.locals[\"__init__\"][0]\n        except KeyError:\n            continue\n\n        pos_only, kw_only = base_init.args._get_arguments_data()\n        for posarg, data in pos_only.items():\n            # if data[1] is None:\n            #     if all_have_defaults and pos_only_store:\n            #         # TODO: This should return an Uninferable as this would raise\n            #         # a TypeError at runtime. However, transforms can't return\n            #         # Uninferables currently.\n            #         pass\n            #     all_have_defaults = False\n            pos_only_store[posarg] = data\n\n        for kwarg, data in kw_only.items():\n            kw_only_store[kwarg] = data\n    return pos_only_store, kw_only_store\n\n\ndef _parse_arguments_into_strings(\n    pos_only_store: dict[str, tuple[str | None, str | None]],\n    kw_only_store: dict[str, tuple[str | None, str | None]],\n) -> tuple[str, str]:\n    \"\"\"Parse positional and keyword arguments into strings for an __init__ method.\"\"\"\n    pos_only, kw_only = \"\", \"\"\n    for pos_arg, data in pos_only_store.items():\n        pos_only += pos_arg\n        if data[0]:\n            pos_only += \": \" + data[0]\n        if data[1]:\n            pos_only += \" = \" + data[1]\n        pos_only += \", \"\n    for kw_arg, data in kw_only_store.items():\n        kw_only += kw_arg\n        if data[0]:\n            kw_only += \": \" + data[0]\n        if data[1]:\n            kw_only += \" = \" + data[1]\n        kw_only += \", \"\n\n    return pos_only, kw_only\n\n\ndef _get_previous_field_default(node: nodes.ClassDef, name: str) -> nodes.NodeNG | None:\n    \"\"\"Get the default value of a previously defined field.\"\"\"\n    try:\n        mro = node.mro()\n    except MroError:\n        return None\n\n    for base in reversed(mro):\n        if not base.is_dataclass:\n            continue\n        if name in base.locals:\n            for assign in base.locals[name]:\n                if (\n                    isinstance(assign.parent, nodes.AnnAssign)\n                    and assign.parent.value\n                    and isinstance(assign.parent.value, nodes.Call)\n                    and _looks_like_dataclass_field_call(assign.parent.value)\n                ):\n                    default = _get_field_default(assign.parent.value)\n                    if default:\n                        return default[1]\n    return None\n\n\ndef _generate_dataclass_init(\n    node: nodes.ClassDef, assigns: list[nodes.AnnAssign], kw_only_decorated: bool\n) -> str:\n    \"\"\"Return an init method for a dataclass given the targets.\"\"\"\n    # pylint: disable = too-many-locals, too-many-branches, too-many-statements\n\n    params: list[str] = []\n    kw_only_params: list[str] = []\n    assignments: list[str] = []\n\n    prev_pos_only_store, prev_kw_only_store = _find_arguments_from_base_classes(node)\n\n    for assign in assigns:\n        name, annotation, value = assign.target.name, assign.annotation, assign.value\n\n        # Check whether this assign is overriden by a property assignment\n        property_node: nodes.FunctionDef | None = None\n        for additional_assign in node.locals[name]:\n            if not isinstance(additional_assign, nodes.FunctionDef):\n                continue\n            if not additional_assign.decorators:\n                continue\n            if \"builtins.property\" in additional_assign.decoratornames():\n                property_node = additional_assign\n                break\n\n        is_field = isinstance(value, nodes.Call) and _looks_like_dataclass_field_call(\n            value, check_scope=False\n        )\n\n        if is_field:\n            # Skip any fields that have `init=False`\n            if any(\n                keyword.arg == \"init\" and (keyword.value.bool_value() is False)\n                for keyword in value.keywords  # type: ignore[union-attr] # value is never None\n            ):\n                # Also remove the name from the previous arguments to be inserted later\n                prev_pos_only_store.pop(name, None)\n                prev_kw_only_store.pop(name, None)\n                continue\n\n        if _is_init_var(annotation):  # type: ignore[arg-type] # annotation is never None\n            init_var = True\n            if isinstance(annotation, nodes.Subscript):\n                annotation = annotation.slice\n            else:\n                # Cannot determine type annotation for parameter from InitVar\n                annotation = None\n            assignment_str = \"\"\n        else:\n            init_var = False\n            assignment_str = f\"self.{name} = {name}\"\n\n        ann_str, default_str = None, None\n        if annotation is not None:\n            ann_str = annotation.as_string()\n\n        if value:\n            if is_field:\n                result = _get_field_default(value)  # type: ignore[arg-type]\n                if result:\n                    default_type, default_node = result\n                    if default_type == \"default\":\n                        default_str = default_node.as_string()\n                    elif default_type == \"default_factory\":\n                        default_str = DEFAULT_FACTORY\n                        assignment_str = (\n                            f\"self.{name} = {default_node.as_string()} \"\n                            f\"if {name} is {DEFAULT_FACTORY} else {name}\"\n                        )\n            else:\n                default_str = value.as_string()\n        elif property_node:\n            # We set the result of the property call as default\n            # This hides the fact that this would normally be a 'property object'\n            # But we can't represent those as string\n            try:\n                # Call str to make sure also Uninferable gets stringified\n                default_str = str(\n                    next(property_node.infer_call_result(None)).as_string()\n                )\n            except (InferenceError, StopIteration):\n                pass\n        else:\n            # Even with `init=False` the default value still can be propogated to\n            # later assignments. Creating weird signatures like:\n            # (self, a: str = 1) -> None\n            previous_default = _get_previous_field_default(node, name)\n            if previous_default:\n                default_str = previous_default.as_string()\n\n        # Construct the param string to add to the init if necessary\n        param_str = name\n        if ann_str is not None:\n            param_str += f\": {ann_str}\"\n        if default_str is not None:\n            param_str += f\" = {default_str}\"\n\n        # If the field is a kw_only field, we need to add it to the kw_only_params\n        # This overwrites whether or not the class is kw_only decorated\n        if is_field:\n            kw_only = [k for k in value.keywords if k.arg == \"kw_only\"]  # type: ignore[union-attr]\n            if kw_only:\n                if kw_only[0].value.bool_value() is True:\n                    kw_only_params.append(param_str)\n                else:\n                    params.append(param_str)\n                continue\n        # If kw_only decorated, we need to add all parameters to the kw_only_params\n        if kw_only_decorated:\n            if name in prev_kw_only_store:\n                prev_kw_only_store[name] = (ann_str, default_str)\n            else:\n                kw_only_params.append(param_str)\n        else:\n            # If the name was previously seen, overwrite that data\n            # pylint: disable-next=else-if-used\n            if name in prev_pos_only_store:\n                prev_pos_only_store[name] = (ann_str, default_str)\n            elif name in prev_kw_only_store:\n                params = [name, *params]\n                prev_kw_only_store.pop(name)\n            else:\n                params.append(param_str)\n\n        if not init_var:\n            assignments.append(assignment_str)\n\n    prev_pos_only, prev_kw_only = _parse_arguments_into_strings(\n        prev_pos_only_store, prev_kw_only_store\n    )\n\n    # Construct the new init method parameter string\n    # First we do the positional only parameters, making sure to add the\n    # self parameter and the comma to allow adding keyword only parameters\n    params_string = \"\" if \"self\" in prev_pos_only else \"self, \"\n    params_string += prev_pos_only + \", \".join(params)\n    if not params_string.endswith(\", \"):\n        params_string += \", \"\n\n    # Then we add the keyword only parameters\n    if prev_kw_only or kw_only_params:\n        params_string += \"*, \"\n    params_string += f\"{prev_kw_only}{', '.join(kw_only_params)}\"\n\n    assignments_string = \"\\n    \".join(assignments) if assignments else \"pass\"\n    return f\"def __init__({params_string}) -> None:\\n    {assignments_string}\"\n\n\ndef infer_dataclass_attribute(\n    node: nodes.Unknown, ctx: context.InferenceContext | None = None\n) -> Iterator[InferenceResult]:\n    \"\"\"Inference tip for an Unknown node that was dynamically generated to\n    represent a dataclass attribute.\n\n    In the case that a default value is provided, that is inferred first.\n    Then, an Instance of the annotated class is yielded.\n    \"\"\"\n    assign = node.parent\n    if not isinstance(assign, nodes.AnnAssign):\n        yield Uninferable\n        return\n\n    annotation, value = assign.annotation, assign.value\n    if value is not None:\n        yield from value.infer(context=ctx)\n    if annotation is not None:\n        yield from _infer_instance_from_annotation(annotation, ctx=ctx)\n    else:\n        yield Uninferable\n\n\ndef infer_dataclass_field_call(\n    node: nodes.Call, ctx: context.InferenceContext | None = None\n) -> Iterator[InferenceResult]:\n    \"\"\"Inference tip for dataclass field calls.\"\"\"\n    if not isinstance(node.parent, (nodes.AnnAssign, nodes.Assign)):\n        raise UseInferenceDefault\n    result = _get_field_default(node)\n    if not result:\n        yield Uninferable\n    else:\n        default_type, default = result\n        if default_type == \"default\":\n            yield from default.infer(context=ctx)\n        else:\n            new_call = parse(default.as_string()).body[0].value\n            new_call.parent = node.parent\n            yield from new_call.infer(context=ctx)\n\n\ndef _looks_like_dataclass_decorator(\n    node: nodes.NodeNG, decorator_names: frozenset[str] = DATACLASSES_DECORATORS\n) -> bool:\n    \"\"\"Return True if node looks like a dataclass decorator.\n\n    Uses inference to lookup the value of the node, and if that fails,\n    matches against specific names.\n    \"\"\"\n    if isinstance(node, nodes.Call):  # decorator with arguments\n        node = node.func\n    try:\n        inferred = next(node.infer())\n    except (InferenceError, StopIteration):\n        inferred = Uninferable\n\n    if isinstance(inferred, UninferableBase):\n        if isinstance(node, nodes.Name):\n            return node.name in decorator_names\n        if isinstance(node, nodes.Attribute):\n            return node.attrname in decorator_names\n\n        return False\n\n    return (\n        isinstance(inferred, nodes.FunctionDef)\n        and inferred.name in decorator_names\n        and inferred.root().name in DATACLASS_MODULES\n    )\n\n\ndef _looks_like_dataclass_attribute(node: nodes.Unknown) -> bool:\n    \"\"\"Return True if node was dynamically generated as the child of an AnnAssign\n    statement.\n    \"\"\"\n    parent = node.parent\n    if not parent:\n        return False\n\n    scope = parent.scope()\n    return (\n        isinstance(parent, nodes.AnnAssign)\n        and isinstance(scope, nodes.ClassDef)\n        and is_decorated_with_dataclass(scope)\n    )\n\n\ndef _looks_like_dataclass_field_call(\n    node: nodes.Call, check_scope: bool = True\n) -> bool:\n    \"\"\"Return True if node is calling dataclasses field or Field\n    from an AnnAssign statement directly in the body of a ClassDef.\n\n    If check_scope is False, skips checking the statement and body.\n    \"\"\"\n    if check_scope:\n        stmt = node.statement()\n        scope = stmt.scope()\n        if not (\n            isinstance(stmt, nodes.AnnAssign)\n            and stmt.value is not None\n            and isinstance(scope, nodes.ClassDef)\n            and is_decorated_with_dataclass(scope)\n        ):\n            return False\n\n    try:\n        inferred = next(node.func.infer())\n    except (InferenceError, StopIteration):\n        return False\n\n    if not isinstance(inferred, nodes.FunctionDef):\n        return False\n\n    return inferred.name == FIELD_NAME and inferred.root().name in DATACLASS_MODULES\n\n\ndef _looks_like_dataclasses(node: nodes.Module) -> bool:\n    return node.qname() == \"dataclasses\"\n\n\ndef _resolve_private_replace_to_public(node: nodes.Module) -> None:\n    \"\"\"In python/cpython@6f3c138, a _replace() method was extracted from\n    replace(), and this indirection made replace() uninferable.\"\"\"\n    if \"_replace\" in node.locals:\n        node.locals[\"replace\"] = node.locals[\"_replace\"]\n\n\ndef _get_field_default(field_call: nodes.Call) -> _FieldDefaultReturn:\n    \"\"\"Return a the default value of a field call, and the corresponding keyword\n    argument name.\n\n    field(default=...) results in the ... node\n    field(default_factory=...) results in a Call node with func ... and no arguments\n\n    If neither or both arguments are present, return (\"\", None) instead,\n    indicating that there is not a valid default value.\n    \"\"\"\n    default, default_factory = None, None\n    for keyword in field_call.keywords:\n        if keyword.arg == \"default\":\n            default = keyword.value\n        elif keyword.arg == \"default_factory\":\n            default_factory = keyword.value\n\n    if default is not None and default_factory is None:\n        return \"default\", default\n\n    if default is None and default_factory is not None:\n        new_call = nodes.Call(\n            lineno=field_call.lineno,\n            col_offset=field_call.col_offset,\n            parent=field_call.parent,\n            end_lineno=field_call.end_lineno,\n            end_col_offset=field_call.end_col_offset,\n        )\n        new_call.postinit(func=default_factory, args=[], keywords=[])\n        return \"default_factory\", new_call\n\n    return None\n\n\ndef _is_keyword_only_sentinel(node: nodes.NodeNG) -> bool:\n    \"\"\"Return True if node is the KW_ONLY sentinel.\"\"\"\n    inferred = safe_infer(node)\n    if not isinstance(inferred, bases.Instance):\n        return False\n    if inferred.qname() == \"dataclasses._KW_ONLY_TYPE\":\n        return True\n    if inferred.qname() != \"builtins.sentinel\":\n        return False\n    if isinstance(node, nodes.Name):\n        _, assignments = node.lookup(node.name)\n        return any(\n            isinstance(assignment, nodes.ImportFrom)\n            and assignment.modname == \"dataclasses\"\n            and any(imported == \"KW_ONLY\" for imported, _ in assignment.names)\n            for assignment in assignments\n        )\n    if isinstance(node, nodes.Attribute) and node.attrname == \"KW_ONLY\":\n        inferred_expr = safe_infer(node.expr)\n        return (\n            isinstance(inferred_expr, nodes.Module)\n            and inferred_expr.qname() == \"dataclasses\"\n        )\n    return False\n\n\ndef _is_init_var(node: nodes.NodeNG) -> bool:\n    \"\"\"Return True if node is an InitVar, with or without subscripting.\"\"\"\n    try:\n        inferred = next(node.infer())\n    except (InferenceError, StopIteration):\n        return False\n\n    return getattr(inferred, \"name\", \"\") == \"InitVar\"\n\n\n# Allowed typing classes for which we support inferring instances\n_INFERABLE_TYPING_TYPES = frozenset(\n    (\n        \"Dict\",\n        \"FrozenSet\",\n        \"List\",\n        \"Set\",\n        \"Tuple\",\n    )\n)\n\n\ndef _infer_instance_from_annotation(\n    node: nodes.NodeNG, ctx: context.InferenceContext | None = None\n) -> Iterator[UninferableBase | bases.Instance]:\n    \"\"\"Infer an instance corresponding to the type annotation represented by node.\n\n    Currently has limited support for the typing module.\n    \"\"\"\n    klass = None\n    try:\n        klass = next(node.infer(context=ctx))\n    except (InferenceError, StopIteration):\n        yield Uninferable\n    if not isinstance(klass, nodes.ClassDef):\n        yield Uninferable\n    elif klass.root().name in {\n        \"typing\",\n        \"_collections_abc\",\n        \"\",\n    }:  # \"\" because of synthetic nodes in brain_typing.py\n        if klass.name in _INFERABLE_TYPING_TYPES:\n            yield klass.instantiate_class()\n        else:\n            yield Uninferable\n    else:\n        yield klass.instantiate_class()\n\n\ndef register(manager: AstroidManager) -> None:\n    if PY313_PLUS:\n        manager.register_transform(\n            nodes.Module,\n            _resolve_private_replace_to_public,\n            _looks_like_dataclasses,\n        )\n\n    manager.register_transform(\n        nodes.ClassDef, dataclass_transform, is_decorated_with_dataclass\n    )\n\n    manager.register_transform(\n        nodes.Call,\n        inference_tip(infer_dataclass_field_call, raise_on_overwrite=True),\n        _looks_like_dataclass_field_call,\n    )\n\n    manager.register_transform(\n        nodes.Unknown,\n        inference_tip(infer_dataclass_attribute, raise_on_overwrite=True),\n        _looks_like_dataclass_attribute,\n    )\n"
+     }
+    }
+   ],
+   "llm_call_count": 0
+  },
+  {
+   "step_id": 4,
+   "timestamp": "2026-11-09T10:32:11.935Z",
+   "source": "agent",
+   "message": "",
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call_2",
+      "content": "Submitted."
+     }
+    ]
+   },
+   "extra": {
+    "repogym": {
+     "ok": true,
+     "exit_code": null,
+     "truncated": false,
+     "timed_out": false,
+     "seconds": 0.0,
+     "raw_chars": 10
+    }
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call_2",
+     "function_name": "submit",
+     "arguments": {}
+    }
+   ],
+   "llm_call_count": 0
+  }
+ ],
+ "final_metrics": {
+  "total_steps": 4,
+  "extra": {
+   "repogym": {
+    "reward": 1,
+    "status": "graded",
+    "grade": {
+     "status": "graded",
+     "reward": 1,
+     "fail_to_pass_passed": 3,
+     "fail_to_pass_total": 3,
+     "pass_to_pass_failed": [],
+     "pass_to_pass_total": 84,
+     "fail_to_pass_failed": [],
+     "stage": "completed",
+     "reverts": [],
+     "graded_patch_lines": 13,
+     "error": "",
+     "peak_memory_bytes": 70725632,
+     "seconds": 6.9
+    },
+    "flags": {
+     "git_history_commands": [],
+     "network_attempts": [],
+     "network_errors_in_output": [],
+     "task_data_search": [],
+     "test_files_edited": [],
+     "non_test_reverts": [],
+     "agent_committed": [],
+     "files_outside_repo": [],
+     "symlinks_outside_repo": [],
+     "budget_exhausted": [],
+     "gold_content_in_observations": [],
+     "source_references_test_harness": [],
+     "stored_observation_truncated": []
+    },
+    "flags_raised": [],
+    "done_reason": "submitted",
+    "termination": "submitted",
+    "accounting": {}
+   }
+  }
+ },
+ "extra": {
+  "repogym": {
+   "task_id": "pylint-dev__astroid-3152",
+   "release": "v0.1",
+   "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
+   "episode_id": "d513b7b30b360485",
+   "image_digest": "sha256:c75d6b78f8d2dc408807bb0db675deac4002c075a2a5bb4c451868ec389e5aa1",
+   "repogym_commit": "ff3aad34aba5318ca3b02537b4357c58dc89a263",
+   "budgets": {
+    "max_steps": 100,
+    "max_wall_seconds": 1800,
+    "max_total_observation_chars": 1000000,
+    "command_timeout_seconds": 120,
+    "run_tests_timeout_seconds": 300,
+    "max_observation_chars": 10000,
+    "max_cost_usd": null,
+    "max_disk_mb": 2048,
+    "max_file_mb": 1024
+   },
+   "api_tier": null,
+   "quota_ids_seen": [],
+   "seed": null,
+   "episode_key": "pylint-dev__astroid-3152",
+   "experiment": null
+  }
+ }
+}
