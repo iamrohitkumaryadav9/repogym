@@ -292,6 +292,56 @@ This goes into PREREGISTRATION.md at Gate 2:
 * **Not Flash-Lite:** 450 requests a day is about 6 full episodes, so E1 would take about 17
   days.
 
+### 6.5 Server errors by hour, and in-place retries (D16, amended)
+
+Error rate per model by UTC hour, 9 November (`scripts/reliability_by_hour.py`):
+
+| Model | Hour (UTC) | Attempts | Server errors | Rate |
+|---|---|---|---|---|
+| gemini-3.5-flash-lite | 2026-11-09 11:00 | 225 | 0 | 0% |
+| gemma-4-26b-a4b-it | 2026-11-09 11:00 | 58 | 8 | 14% |
+| gemma-4-26b-a4b-it | 2026-11-09 12:00 | 32 | 7 | 22% |
+| gemma-4-26b-a4b-it | 2026-11-09 13:00 | 57 | 27 | 47% |
+| gemma-4-26b-a4b-it | 2026-11-09 14:00 | 72 | 33 | 46% |
+| gemma-4-26b-a4b-it | 2026-11-09 15:00 | 41 | 11 | 27% |
+| gemma-4-31b-it | 2026-11-09 11:00 | 20 | 11 | 55% |
+| gemma-4-31b-it | 2026-11-09 12:00 | 55 | 37 | 67% |
+| gemma-4-31b-it | 2026-11-09 13:00 | 2 | 1 | 50% |
+| gemma-4-31b-it | 2026-11-09 14:00 | 2 | 2 | 100% |
+| gemma-4-31b-it | 2026-11-09 15:00 | 1 | 1 | 100% |
+
+* **Sources.** Attempts come from trajectories, from the 6 failed attempts behind each
+  `ProviderUnavailable` episode, from the 31B probe and from the thinking experiments. From
+  15:37 UTC they come from the new per-attempt log, `data/quota/attempts-<day>.jsonl`.
+* **What one day shows.** 26B's rate tripled between 11:00–12:00 UTC and 13:00–14:00 UTC
+  (14–22% → 46–47%), then eased (28% at 15:00). 31B is at 55–100% in every hour. Flash-Lite
+  had none.
+* One afternoon can't separate time-of-day from day-to-day variation. The attempt log now
+  records every attempt, so by Gate 2 there will be several days of hourly rates to schedule
+  E1–E3 around, if they show a pattern.
+* **The 31B probe** (single attempts every 36 min): 500, 200, 500, 500, 503 so far, so 1 of 5
+  succeeded.
+
+**How 5xx are handled now (from 15:37 UTC):**
+
+* A 5xx or transport error is retried in place: same episode, sandbox and state.
+* Backoff is jittered and exponential, from 30 s, capped at 10 min between tries.
+* `api_failure` comes only after 20 consecutive failures or 60 minutes, whichever comes first.
+  At these values 60 minutes always comes first, after about 10–11 failures.
+* The waiting is excluded from active time and bounded by the 6-hour elapsed cap.
+* The thresholds are the experiment's `retry` section: hashed, frozen and recorded per
+  episode.
+
+**Applied too late for attrs-1448.** Its three attempts all ran under the old rule:
+
+| Attempt | Outcome | Steps |
+|---|---|---|
+| 1 | `api_failure` (5xx) | 9 |
+| 2 | `api_failure` (5xx) | 34 |
+| 3 | submitted, unsolved | 41 |
+
+Its outcome stands as recorded. tomlkit-536 restarted from scratch under the new rule.
+
 ## 7. Flash-Lite thinking level (proposal, evidence from the docs)
 
 * **Status.** Flash-Lite ran with 0 thinking tokens at its default (`minimal`). Thinking-level
@@ -345,9 +395,21 @@ This goes into PREREGISTRATION.md at Gate 2:
     its three episodes start at **08:05 UTC on 10 November**, five minutes after the
     midnight-Pacific reset. A detached scheduled process handles that.
   * Gemma 26B started at 13:30 UTC on 9 November.
-* *Results: to be completed when both halves finish:* solves, missing-reasoning events,
+* **Flash-Lite `high` check:** it starts as soon as all the re-pilot's Flash-Lite cells are done
+  (`scripts/run_when_quota.py`). It doesn't wait for a day with enough quota free.
+* **If the quota runs out mid-episode,** the call is held in place until the 08:00 UTC reset
+  and then continues (D16). I need to correct what I implied earlier: before today's change,
+  running out of daily quota *ended* the episode as `api_failure`, and the cell was rerun from
+  scratch after the reset. The in-place hold is new. These are confirmed by unit tests:
+  * a call held 20 hours across the reset continues in the same episode;
+  * the hold counts neither as active time nor toward the 6-hour elapsed cap.
+
+  The sandbox container survives the hold because it runs `sleep infinity`. That part is
+  confirmed by its configuration, not by a live 20-hour hold yet. Whether the `high` check
+  actually crosses a reset will show in its record (`episode_seconds.quota_pause`).
+* *Results: to be completed when the runs finish:* solves, missing-reasoning events,
   reminders, repetition (exact and after masking), budget violations, the drop fallback,
-  steps, and time.
+  preserved-thinking share, steps, and time.
 
 ## 10. Time estimates
 
