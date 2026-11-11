@@ -53,8 +53,9 @@ prompt much over 12K tokens can't be sent more than once a minute at all.
 ## Pilots
 
 Four pilots were run on dev tasks only, tagged `pilot`, and are **excluded from all analysis**.
-Their configs are in `configs/archive/` and their data in `data/archive/pilots/`. Details are in
-[gate1_report.md](gate1_report.md); what was archived afterwards is in [ARCHIVE.md](ARCHIVE.md).
+Their configs are in `configs/archive/` and their data in `data/archive/pilots/`. The first pilot
+is reported in [gate1_report.md](gate1_report.md); the others, and what was archived afterwards,
+are in [ARCHIVE.md](ARCHIVE.md) and at the archive tag.
 
 * **First pilot (`week3-pilot`, 3 dev tasks × 3 models, `obs_mask`).** Stopped early. All 5
   finished episodes hit the 75-step cap with no source edit (a floor effect), caused by missing
