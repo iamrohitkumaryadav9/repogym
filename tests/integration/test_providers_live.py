@@ -1,4 +1,4 @@
-"""Live, manual integration tests of tool calling against the Gemini API free tier (D8–D13).
+"""Live, manual integration tests of tool calling against the Gemini API free tier (D8–D12).
 
 They spend a few requests per model from the shared daily quota (counted in the ledger), so
 they never run in CI: ``pytest -m live tests/integration/test_providers_live.py``. Each one
@@ -6,8 +6,9 @@ checks a behaviour the context manager relies on and that the docs can't settle 
 
 * multi-turn function calling with thought signatures replayed verbatim (D12);
 * a history with a middle step dropped and a summary added to the task message is accepted
-  (what sliding_window, obs_mask fallback, llm_summary and hybrid send);
-* countTokens agrees with the prompt_tokens the call reports (D13).
+  (what sliding_window, obs_mask fallback, llm_summary and hybrid send).
+
+(A countTokens agreement test was archived with countTokens itself; see docs/week3/ARCHIVE.md.)
 """
 
 import pytest
@@ -91,13 +92,3 @@ def test_dropped_middle_step_and_summary_part_are_accepted(provider):
     third = step(provider, view)
     assert third.http_status == 200
     print(provider.name, "after drop+summary:", third.message.calls[0].name)
-
-
-def test_count_tokens_matches_reported_prompt_tokens(provider):
-    history = [Message(role="user", text=TASK)]
-    counted = provider.count_tokens(SYSTEM, history, TOOLS)
-    gen = step(provider, history)
-    reported = gen.usage.prompt_tokens
-    print(provider.name, "countTokens:", counted, "reported:", reported)
-    assert counted is not None and reported
-    assert abs(counted - reported) <= max(10, 0.05 * reported)

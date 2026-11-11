@@ -32,6 +32,7 @@ from repogym.config import DATA_DIR, ROOT
 from repogym.context.strategies import ContextManager
 from repogym.context.tokens import TokenEstimator
 from repogym.experiments import guard
+from repogym.experiments.models_check import check_models
 from repogym.experiments.spec import Cell, Experiment, release_tasks
 from repogym.harness import EpisodeRecord, _write_lock, run_episode
 from repogym.providers.gemini import GeminiProvider, GeminiSettings
@@ -172,6 +173,7 @@ class Runner:
         sleep=time.sleep,
         on_done: Callable[[EpisodeRecord], None] | None = None,
         guard_fn: Callable = guard.check,
+        model_check: Callable = check_models,
     ) -> None:
         guard_fn(experiment, final_test_run)
         self.experiment, self.api_key = experiment, api_key
@@ -181,6 +183,7 @@ class Runner:
         self.clock, self.sleep, self.on_done = clock, sleep, on_done
         self.tasks = release_tasks(experiment.release)
         self.stop = threading.Event()
+        self.model_check = model_check
 
     def pending(self, model: str) -> list[Cell]:
         done = latest_records(self.experiment.run_dir)
@@ -236,6 +239,8 @@ class Runner:
                 self.sleep(60)  # per-minute exhaustion or an outage: brief pause, then retry
 
     def run(self) -> None:
+        # Fail fast if a configured model ID isn't served (one models.list call, no generation).
+        self.model_check(self.api_key, self.experiment.models, self.experiment.run_dir)
         threads = [
             threading.Thread(target=self.worker, args=(m,), name=f"worker-{m}", daemon=True)
             for m in self.experiment.models

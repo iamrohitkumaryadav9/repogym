@@ -214,6 +214,7 @@ def runner(exp, episodes, tmp_path, clock=None, sleeps=None):
         ledger=QuotaLedger(tmp_path / "ledger.json"),
         sleep=sleeps.append,
         clock=clock or (lambda: 1_800_000_000.0),
+        model_check=lambda *a: None,
         guard_fn=lambda e, f: guard.check(
             e, f, prereg=tmp_path / "x.md", refusals=tmp_path / "ref.jsonl", root=tmp_path
         ),
@@ -390,3 +391,19 @@ def test_records_being_written_by_another_process_are_skipped_not_fatal(tmp_path
     (run_dir / "episodes.jsonl").write_text(done[:40] + "\n" + done + "\n")
     with pytest.raises(ValueError):  # a malformed COMPLETE line is real corruption
         latest_records(run_dir)
+
+
+def test_a_run_stops_before_any_episode_if_a_model_id_is_not_served(tmp_path):
+    from repogym.experiments.models_check import ModelCheckError
+
+    ran = []
+
+    def refuse(api_key, models, out_dir):
+        raise ModelCheckError("model ID(s) not in the API's model list: ['gemma-4-31b-it']")
+
+    exp = write_exp(tmp_path)
+    r = runner(exp, lambda *a, **k: ran.append(a), tmp_path)
+    r.model_check = refuse
+    with pytest.raises(ModelCheckError, match="gemma-4-31b-it"):
+        r.run()
+    assert ran == []

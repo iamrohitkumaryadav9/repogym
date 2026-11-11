@@ -628,6 +628,34 @@ def _run_experiment(path: Path, final_test_run: bool) -> None:
 
 
 @app.command()
+def check_models(
+    save: Annotated[
+        Path | None, typer.Option(help="Write the evidence JSON here, e.g. docs/week3/evidence/.")
+    ] = None,
+    config: Annotated[Path, typer.Option(help="Models file.")] = Path("configs/models.yaml"),
+) -> None:
+    """Verify every configured model ID against the API's model list (no generation)."""
+    import yaml
+
+    from repogym.experiments.models_check import ModelCheckError
+    from repogym.experiments.models_check import check_models as run_check
+    from repogym.experiments.runner import gemini_api_key
+
+    models = list(yaml.safe_load(config.read_text(encoding="utf-8"))["models"])
+    try:
+        record = run_check(gemini_api_key(), models, None)
+    except ModelCheckError as exc:
+        typer.echo(f"MODEL CHECK FAILED: {exc}")
+        raise typer.Exit(2) from exc
+    for model, entry in record["configured"].items():
+        typer.echo(f"{model}: ok ({entry['name']}, version {entry['version']})")
+    if save:
+        save.parent.mkdir(parents=True, exist_ok=True)
+        save.write_text(json.dumps(record, indent=1), encoding="utf-8")
+        typer.echo(f"saved {save}")
+
+
+@app.command()
 def status(experiment: Annotated[Path, typer.Option(help="Experiment file.")]) -> None:
     """Per-model progress, quota used today, tokens, solves and ETA for an experiment."""
     from repogym.experiments import spec

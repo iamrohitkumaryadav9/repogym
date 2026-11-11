@@ -1,0 +1,42 @@
+{
+ "checked_at": "2026-11-11T06:43:08+00:00",
+ "method": "models.list (no generation)",
+ "models_listed": 62,
+ "configured": {
+  "gemini-3.5-flash-lite": {
+   "name": "models/gemini-3.5-flash-lite",
+   "display_name": "Gemini 3.5 Flash Lite",
+   "version": "3.5-flash-lite-07-2026",
+   "supported_actions": [
+    "generateContent",
+    "countTokens",
+    "createCachedContent",
+    "batchGenerateContent"
+   ],
+   "input_token_limit": 1048576,
+   "output_token_limit": 65536
+  },
+  "gemma-4-31b-it": {
+   "name": "models/gemma-4-31b-it",
+   "display_name": "Gemma 4 31B IT",
+   "version": "001",
+   "supported_actions": [
+    "generateContent",
+    "countTokens"
+   ],
+   "input_token_limit": 262144,
+   "output_token_limit": 32768
+  },
+  "gemma-4-26b-a4b-it": {
+   "name": "models/gemma-4-26b-a4b-it",
+   "display_name": "Gemma 4 26B A4B IT",
+   "version": "001",
+   "supported_actions": [
+    "generateContent",
+    "countTokens"
+   ],
+   "input_token_limit": 262144,
+   "output_token_limit": 32768
+  }
+ }
+}
