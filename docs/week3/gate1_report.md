@@ -1,5 +1,10 @@
 # Week 3: Gate 1 report
 
+> **Historical (cleanup 2026-11-11).** This report describes the code and runs as they were at
+> tag `week3-archive-2026-11-11`. Much of what it proposes or reports (the D19 agent, the 3.1
+> Flash-Lite pilot, the `high` check, the 31B probe, the 5xx in-place policy) has since been
+> archived; see [ARCHIVE.md](ARCHIVE.md). Its pilot data is in `data/archive/pilots/`.
+
 *Status: **complete, waiting for your decision**, updated 2026-11-11 at about 02:00 UTC.*
 
 * **Done:** the re-pilot (§9, 0 of 6 episodes solved), the Flash-Lite `high` check (§7.1), the

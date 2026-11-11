@@ -50,6 +50,28 @@ TPM counts **input** tokens, and quotas reset at midnight Pacific time (D11). Ge
 what makes a hard per-prompt budget a real constraint here rather than an artificial one: a
 prompt much over 12K tokens can't be sent more than once a minute at all.
 
+## Pilots
+
+Four pilots were run on dev tasks only, tagged `pilot`, and are **excluded from all analysis**.
+Their configs are in `configs/archive/` and their data in `data/archive/pilots/`. Details are in
+[gate1_report.md](gate1_report.md); what was archived afterwards is in [ARCHIVE.md](ARCHIVE.md).
+
+* **First pilot (`week3-pilot`, 3 dev tasks × 3 models, `obs_mask`).** Stopped early. All 5
+  finished episodes hit the 75-step cap with no source edit (a floor effect), caused by missing
+  reasoning text, clipped long views, masking-driven repeats and a misleading storage-cap
+  statement. Gemma 26B also ran over B because its earlier thinking is billed twice.
+* **Re-pilot (`week3-repilot`, 3 new dev tasks × Flash-Lite and Gemma 26B), with the Gate 1
+  agent fixes.** 0 of 6 episodes solved. The agent edited the right file in 3 of 6, and the
+  hidden tests still failed.
+* **3.1 Flash-Lite pilot (`week3-pilot-gemini31`)** and **3.5 Flash-Lite at `high` thinking
+  (`week3-flash-thinking-high`)**, same 3 tasks. 0 of 6 solved; with thinking on, the estimator
+  under-counted Gemini's replayed thinking and calls ran over B.
+* **Gemma 31B reliability probe:** 8 of 20 spaced calls succeeded (5xx otherwise); evidence in
+  the archive tag.
+
+None of this is evidence for the study. After the cleanup the agent is the first-pilot agent
+(see ARCHIVE.md), so a later pilot is not read as new evidence either.
+
 ## Not comparable with Week 2
 
 The Week 2 baseline smoke test used a **bash-only, text-parsed agent** (one ```bash block per

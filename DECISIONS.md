@@ -151,6 +151,8 @@ part of the "current turn", and every assistant message that's sent must keep it
 
 ## D13. countTokens isn't counted against RPM or TPM (measured); its RPD effect is unknown
 
+> **Archived (cleanup 2026-11-11): the original prompt sizes prompts with the estimator and checks them against the API's reported usage; the `countTokens` provider method and exact check were removed, see tag `week3-archive-2026-11-11`. The measurements below stay as evidence.**
+
 *2026-11-09.* The docs (token counting and rate-limit pages) don't say whether `countTokens`
 counts against limits. Measured (`docs/week3/evidence/api_probes_*.json`):
 * **RPM:** 35 `countTokens` calls in 8.9 s on each Gemma model (limit 30 RPM), and 20 calls in
@@ -192,6 +194,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
 *Superseded 2026-11-09 by D20 (no `countTokens` in runs) and D21 (Gemma's re-billed thinking).*
 
 ## D14. Clipping and masking are prompt-only; trajectories store full observations
+
+> **Partly archived (cleanup 2026-11-11). Kept: clipping and masking are prompt-only. Archived: the `stored_observation_truncated` flag and the `tool_agent` first-message text, which changed Week 2 output; both are restored to the `week2-complete` behaviour. see tag `week3-archive-2026-11-11`.**
 
 * **Context.** Analysis must be able to reconstruct both what the tool returned and what the
   model actually saw. Week 2's environment truncates each observation to
@@ -249,6 +253,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     exact `countTokens` (D13).
 
 ## D16. The experiment runner: cells, resume, exclusion rules, concurrency
+
+> **Partly archived (cleanup 2026-11-11). Kept: cells, resume, per-attempt files, at most 3 `api_failure` attempts per cell, the daily-quota hold until reset. Archived: the heartbeat, PID files and container recording, the `--models` filter, the global per-attempt log, and the 5xx in-place policy (30 s to 600 s, 60 min, 20 failures). The restored retry rule is 6 attempts with jittered backoff, then `api_failure`. see tag `week3-archive-2026-11-11`.**
 
 * **Context.** E1–E3 run for days under daily quotas, on one 7.7 GiB machine, and must survive
   restarts without duplicating or silently dropping episodes.
@@ -380,6 +386,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
 
 ## D18. When a prompt leaves the summary out, it is recorded, counted and reported
 
+> **Archived (cleanup 2026-11-11): beyond the original prompt. The last-resort fallback and the `summary_omitted` event are removed; a summary that alone makes the minimal view exceed B now ends the episode as `context_failure`. see tag `week3-archive-2026-11-11`.**
+
 * **Context.**
   * With `llm_summary` or `hybrid`, the context manager may, as a last resort, leave the
     stored summary out of one prompt so it fits B (found by the property test; see the
@@ -401,6 +409,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
   often it actually ran as specified.
 
 ## D19. Agent fixes from the pilot diagnosis (approved at Gate 1)
+
+> **Archived (cleanup 2026-11-11): beyond the original prompt. The agent is back to its first-pilot form, so a later pilot is not new evidence. Kept from this round: per-attempt trajectories and the 3-attempt cap. see tag `week3-archive-2026-11-11`.**
 
 * **Context.** In the first pilot, all 5 episodes reached the step cap without a source edit
   (Gate 1 report, section 5):
@@ -438,6 +448,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
   * The Week 2 bash agent and its prompt are untouched. `view_file` isn't one of its tools.
 
 ## D20. countTokens is never used in timed runs; our ledger counts our requests
+
+> **Archived (cleanup 2026-11-11): moot once `countTokens` is removed. The dashboard cross-check and the ledger lock fix are kept. see tag `week3-archive-2026-11-11`.**
 
 *Decided 2026-11-09 (operator).*
 
@@ -516,6 +528,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
 
 ## D21. Gemma's earlier thinking is kept in the history and counted exactly
 
+> **Partly archived (cleanup 2026-11-11). Kept: thinking stays in the history and is counted exactly in the estimate (`replay_tokens`), because B must hold (2.3). Archived: the preserved-thinking share reporting commitment. see tag `week3-archive-2026-11-11`.**
+
 *Measured 2026-11-09; evidence in `docs/week3/evidence/thinking_history_gemma-4-26b-a4b-it.json`,
 `scripts/probe_thinking_history.py`.*
 
@@ -577,6 +591,8 @@ The RPD effect can only be seen on the AI Studio dashboard. It goes to the opera
     function calls."
 
 ## D22. Every model runs at its vendor-recommended thinking setting for coding tasks
+
+> **Archived (cleanup 2026-11-11): beyond the original prompt, which asks for each vendor's documented defaults (D10). Thinking settings return to D10; the `high` check and the 3.1 Flash-Lite pilot are in `data/archive/pilots/`. see tag `week3-archive-2026-11-11`.**
 
 *Decided 2026-11-09 (operator, Gate 1).*
 
