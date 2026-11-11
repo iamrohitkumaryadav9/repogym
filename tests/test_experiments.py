@@ -416,14 +416,12 @@ def test_the_repilot_is_dev_only_on_new_tasks(tmp_path):
     check(second, tmp_path / "none.md", tmp_path, final=False)
 
 
-def test_retry_thresholds_are_preregistered_hashed_and_overridable(tmp_path):
+def test_retry_policy_is_hashed_and_holds_the_daily_quota(tmp_path):
     exp = write_exp(tmp_path)
     r = exp.resolved()["retry"]
-    assert r["server_base_delay"] == 30.0 and r["server_max_delay"] == 600.0
-    assert r["server_max_failures"] == 20 and r["server_max_seconds"] == 3600.0
-    assert r["pause_on_daily"] is True and "retry" in guard.FROZEN_KEYS
-    changed = write_exp(tmp_path, retry={"server_max_seconds": 1800})
-    assert changed.retry.server_max_seconds == 1800 and changed.retry.pause_on_daily is True
+    assert r["max_attempts"] == 6 and r["pause_on_daily"] is True and "retry" in guard.FROZEN_KEYS
+    changed = write_exp(tmp_path, retry={"max_attempts": 4})
+    assert changed.retry.max_attempts == 4 and changed.retry.pause_on_daily is True
     assert changed.resolved_sha256 != exp.resolved_sha256
 
 

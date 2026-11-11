@@ -6,11 +6,9 @@
   so the episode keeps its sandbox and state. Otherwise it stops at once and the worker sleeps
   until the reset.
 * 429 otherwise: per-minute throttling. Wait at least the server's ``retryDelay``, or a jittered
-  exponential backoff, for up to ``max_attempts`` tries.
-* 5xx and transport errors: transient server trouble. Retry in place with jittered exponential
-  backoff (``server_base_delay`` doubling to ``server_max_delay``). Give up only after
-  ``server_max_failures`` consecutive failures or ``server_max_seconds`` since the first,
-  whichever comes first.
+  exponential backoff.
+* 5xx and transport errors: transient server trouble, same jittered exponential backoff.
+  Both kinds share ``max_attempts`` (6) tries; after that the call fails (``api_failure``).
 * Any other 4xx: rejected at once.
 
 Every attempt is recorded with its time, and can be streamed to an attempt log.
@@ -38,11 +36,6 @@ class RetryPolicy:
     base_delay: float = 2.0
     max_delay: float = 120.0
     max_honoured_delay: float = 300.0  # a longer server delay means a daily quota
-    # 5xx and transport errors: pause in place (D16, amended 2026-11-09).
-    server_base_delay: float = 30.0
-    server_max_delay: float = 600.0
-    server_max_failures: int = 20  # consecutive failed attempts of one call
-    server_max_seconds: float = 3600.0  # wall time since that call's first failure
     # Daily quota: hold the call in place until the reset (experiments turn this on).
     pause_on_daily: bool = False
     max_daily_pauses: int = 1
@@ -109,13 +102,11 @@ def _run_with_retries(
     before_attempt: Callable[[], None] | None = None,
     on_daily: Callable[[], float | None] | None = None,
     on_attempt: Callable[[Attempt], None] | None = None,
-    clock: Callable[[], float] = time.monotonic,
     wall: Callable[[], float] = time.time,
 ):
     rng = rng or random.Random()
     attempts: list[Attempt] = []
-    rate_limited = server_failures = daily_pauses = 0
-    first_failure: float | None = None
+    failures = daily_pauses = 0
 
     def add(attempt: Attempt) -> None:
         attempts.append(attempt)
@@ -163,30 +154,22 @@ def _run_with_retries(
             add(Attempt(status, "rejected", at=at))
             raise RequestRejected(f"{model} returned HTTP {status}", attempts=attempts)
         if status == 429:
-            rate_limited += 1
-            backoff = min(policy.base_delay * 2 ** (rate_limited - 1), policy.max_delay)
+            failures += 1
+            backoff = min(policy.base_delay * 2 ** (failures - 1), policy.max_delay)
             wait = max(backoff * rng.uniform(0.5, 1.5), delay or 0.0)
-            if rate_limited >= policy.max_attempts:
+            if failures >= policy.max_attempts:
                 add(Attempt(status, "rate_limited", delay, 0.0, quota_ids, at=at))
-                raise ProviderUnavailable(
-                    f"{model}: rate limited {rate_limited} times in a row", attempts
-                )
+                raise ProviderUnavailable(f"{model}: {failures} attempts failed", attempts)
             add(Attempt(status, "rate_limited", delay, wait, quota_ids, at=at))
             sleep(wait)
             continue
-        # 5xx or a transport error: transient server trouble, retried in place.
+        # 5xx or a transport error: transient server trouble, retried with backoff like a 429.
         kind = "transport_error" if status is None else "server_error"
-        server_failures += 1
-        first_failure = clock() if first_failure is None else first_failure
-        elapsed = clock() - first_failure
-        if server_failures >= policy.server_max_failures or elapsed >= policy.server_max_seconds:
+        failures += 1
+        backoff = min(policy.base_delay * 2 ** (failures - 1), policy.max_delay)
+        wait = backoff * rng.uniform(0.5, 1.5)
+        if failures >= policy.max_attempts:
             add(Attempt(status, kind, None, 0.0, at=at))
-            raise ProviderUnavailable(
-                f"{model}: {server_failures} consecutive server errors over {elapsed / 60:.0f} min",
-                attempts,
-            )
-        backoff = policy.server_base_delay * 2 ** (server_failures - 1)
-        wait = min(backoff * rng.uniform(0.5, 1.5), policy.server_max_delay)
-        wait = min(wait, max(policy.server_max_seconds - elapsed, 0.0))
+            raise ProviderUnavailable(f"{model}: {failures} attempts failed", attempts)
         add(Attempt(status, kind, None, wait, at=at))
         sleep(wait)

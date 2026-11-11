@@ -447,7 +447,7 @@ def test_retry_errors_carry_the_time_they_spent():
     with pytest.raises(Exception) as info:
         run_with_retries(
             lambda: _Outcome(False, 500),
-            policy=_Policy(server_max_failures=3, server_max_seconds=10**9),
+            policy=_Policy(max_attempts=3),
             model="m",
             sleep=sleeps.append,
         )

@@ -85,7 +85,7 @@ def provider(script, sleeps=None, limiter=None, settings=None, policy=None):
         client=FakeClient(script),
         sleep=sleeps.append,
         limiter=limiter or RecordingLimiter(),
-        policy=policy or RetryPolicy(max_attempts=4, base_delay=1.0, server_max_failures=4),
+        policy=policy or RetryPolicy(max_attempts=4, base_delay=1.0),
     )
 
 
@@ -415,44 +415,25 @@ def retry(send, clock, policy=None, **kw):
         policy=policy or RetryPolicy(),
         model="m",
         sleep=clock.sleep,
-        clock=clock,
         wall=clock,
         rng=_random.Random(0),
         **kw,
     )
 
 
-def test_server_errors_are_retried_in_place_with_capped_jittered_backoff():
+def test_server_errors_are_retried_with_jittered_backoff_then_give_up_after_six_attempts():
     clock = Clock()
-    value, attempts = retry(scripted([500] * 6 + [503] * 3 + [200]), clock)  # 9 failures
-    assert value == "ok" and len(attempts) == 10 and attempts[-1].kind == "ok"
-    assert 15 <= clock.sleeps[0] <= 45  # starts around 30 s, with jitter
-    assert max(clock.sleeps) <= 600  # never more than 10 minutes between tries
-    assert all(a.at is not None for a in attempts)
-
-
-def test_twenty_consecutive_server_errors_give_up():
-    clock = Clock()
-    policy = RetryPolicy(server_max_seconds=10**9)  # only the count can end it
-    with pytest.raises(ProviderUnavailable, match="20 consecutive server errors") as info:
-        retry(scripted([500] * 25), clock, policy)
-    assert len(info.value.attempts) == 20 and info.value.attempts[-1].slept == 0.0
-
-
-def test_sixty_minutes_of_server_errors_give_up_first():
-    clock = Clock()
-    with pytest.raises(ProviderUnavailable) as info:
-        retry(scripted([500] * 25), clock)
-    # With 30 s doubling to a 10-minute cap, 60 minutes are used up after ~10-11 failures:
-    # at these settings the time limit always comes before the 20-failure limit.
-    assert 10 <= len(info.value.attempts) <= 12
-    failed_for = clock.t - info.value.attempts[0].at
-    assert failed_for == pytest.approx(3600.0)  # the waits are trimmed to the 60-minute budget
+    value, attempts = retry(scripted([500, 503, None, 200]), clock)
+    assert value == "ok" and len(attempts) == 4 and attempts[-1].kind == "ok"
+    assert 1 <= clock.sleeps[0] <= 3  # around the 2 s base, with jitter
+    with pytest.raises(ProviderUnavailable, match="6 attempts failed") as info:
+        retry(scripted([500] * 9), Clock())
+    assert len(info.value.attempts) == 6 and info.value.attempts[-1].slept == 0.0
 
 
 def test_rate_limits_and_client_errors_keep_their_own_rules():
     clock = Clock()
-    with pytest.raises(ProviderUnavailable, match="rate limited 6 times"):
+    with pytest.raises(ProviderUnavailable, match="6 attempts failed"):
         retry(lambda: Outcome(False, 429, body={}), clock)
     with pytest.raises(RequestRejected):
         retry(scripted([500, 400]), Clock())  # a 4xx after a 5xx is still rejected at once
