@@ -435,19 +435,6 @@ def test_progress_hook_sees_every_model_call():
     assert seen == [1, 2, 3]  # after every model call, including the final submit
 
 
-def test_first_message_for_the_tool_agent_states_active_time_not_storage_cap():
-    from repogym.env.environment import instructions
-    from tests.test_episode import _task
-
-    task = _task("t", "2024-01-01T00:00:00Z", "dev")
-    budgets = Budgets(max_observation_chars=200_000)
-    week2 = instructions(task, budgets)
-    week3 = instructions(task, budgets, "tool_agent")
-    assert "truncated to 200000 characters" in week2  # Week 2 text unchanged
-    assert "200000" not in week3 and "active time" in week3
-    assert ToolAgent.instruction_style == "tool_agent"
-
-
 def test_replayed_thinking_is_counted_exactly_in_the_estimate():
     est = TokenEstimator()
     plain = Message(role="assistant", text="x", raw={"role": "model"}, provider="fake")

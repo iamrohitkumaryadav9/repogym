@@ -162,21 +162,7 @@ def gold_probe(task: ReleaseTask, sink: dict | None = None):
     return check
 
 
-def instructions(task: ReleaseTask, budgets: Budgets, style: str = "default") -> str:
-    if style == "tool_agent":
-        # The Week 3 agent describes what it shows the model (clipping, masking) in its own
-        # system prompt, so the storage cap isn't presented as the model's view (D14). The
-        # time budget is active time; waiting for the API doesn't count (D17).
-        return (
-            "You are working in a Python repository at /work, checked out at the commit before "
-            "an issue was fixed. Resolve the issue below by editing the source code. Hidden "
-            "tests will be run against your changes after you submit; changes to test files "
-            "are discarded before grading.\n\n"
-            "Tools: " + ", ".join(t["name"] for t in TOOLS) + ". There is no network access. "
-            f"Budgets: {budgets.max_steps} tool calls, {int(budgets.max_wall_seconds)} s of "
-            f"active time (waiting for the model API doesn't count), "
-            f"{int(budgets.command_timeout_seconds)} s per command. Call submit when you are done."
-        )
+def instructions(task: ReleaseTask, budgets: Budgets) -> str:
     return (
         "You are working in a Python repository at /work, checked out at the commit before an "
         "issue was fixed. Resolve the issue below by editing the source code. Hidden tests "
@@ -199,7 +185,6 @@ class Environment:
         task: ReleaseTask,
         budgets: Budgets | None = None,
         clock=time.monotonic,
-        instruction_style: str = "default",
     ) -> None:
         self.task = task
         self.spec = get_repo(task.repo)
@@ -213,7 +198,6 @@ class Environment:
         self.sandbox: Sandbox | None = None
         self.setup_report: SetupReport | None = None
         self._clock = clock  # budget clock (injectable for tests)
-        self.instruction_style = instruction_style
         self._t0 = 0.0
         self._waited = 0.0  # reported throttling time, excluded from the active-time cap
         self._quota_paused = 0.0  # daily-quota holds, also excluded from the elapsed cap
@@ -243,9 +227,9 @@ class Environment:
         self._t0 = self._clock()
         self._state.started_at = now()
         tools = "\n".join(f"- {t['name']}: {t['description']}" for t in TOOLS)
-        intro = instructions(self.task, self.budgets, self.instruction_style)
         text = (
-            f"{intro}\n\nRepository: /work\n\nAvailable tools:\n{tools}\n\n{issue_text(self.task)}"
+            f"{instructions(self.task, self.budgets)}\n\nRepository: /work\n\n"
+            f"Available tools:\n{tools}\n\n{issue_text(self.task)}"
         )
         return Observation(text=text)
 

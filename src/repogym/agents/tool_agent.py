@@ -197,8 +197,6 @@ class ToolAgent:
     settings: dict = field(default_factory=dict)  # recorded in provenance
     # Called with the env step count after every model call (the runner's heartbeat).
     progress: Callable[[int], None] | None = None
-    # The environment's first message defers to this agent's description of its view (D14).
-    instruction_style: str = "tool_agent"
 
     @property
     def model_name(self) -> str:

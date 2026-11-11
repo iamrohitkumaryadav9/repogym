@@ -9,7 +9,7 @@ import os
 import sys
 
 WORK = "/work"
-MAX_VIEW_LINES = 150  # about what the Week 3 prompt clip keeps (D19)
+MAX_VIEW_LINES = 400
 MAX_FILE_BYTES = 5_000_000
 
 

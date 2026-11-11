@@ -62,9 +62,9 @@ def test_view_numbers_lines_and_reports_ranges(work):
 
 def test_view_limits_range_and_refuses_binary(work):
     (work / "big.txt").write_text("x\n" * 1000)
-    with pytest.raises(ToolError, match="at most 150"):
+    with pytest.raises(ToolError, match="at most 400"):
         view_file({"path": "big.txt", "start_line": 1, "end_line": 900})
-    assert "(lines 1-150 of 1000)" in view_file({"path": "big.txt"})
+    assert "(lines 1-400 of 1000)" in view_file({"path": "big.txt"})
     (work / "blob.bin").write_bytes(b"\x00\x01")
     with pytest.raises(ToolError, match="binary"):
         view_file({"path": "blob.bin"})

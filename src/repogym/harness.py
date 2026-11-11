@@ -24,7 +24,7 @@ from repogym.env.docker import image_id
 from repogym.env.environment import Environment, Observation, instructions, issue_text, now
 from repogym.env.history import distinctive_lines
 from repogym.env.sandbox import EnvSetupError
-from repogym.flags import Evidence, compute, future_gold_lines
+from repogym.flags import compute, future_gold_lines
 from repogym.grade import Grade, grade
 from repogym.release import ReleaseTask
 from repogym.validate import runnable_test_files
@@ -157,11 +157,7 @@ def run_episode(
 ) -> EpisodeRecord:
     manifest = json.loads((RELEASE_DIR / release / "manifest.json").read_text())
     commit, dirty = repogym_commit()
-    # An agent may describe its own view of observations (the Week 3 tool agent clips and
-    # masks them); the environment's first message then doesn't claim otherwise (D14).
-    env = Environment(
-        task, budgets, instruction_style=getattr(agent, "instruction_style", "default")
-    )
+    env = Environment(task, budgets)
     record = EpisodeRecord(
         run_id=run_dir.name,
         episode_id=env.episode_id,
@@ -235,9 +231,6 @@ def run_episode(
     record.past_gold_lines_observed = sorted(
         {line for line in past for step in env.steps if line in step.observation}
     )
-    truncated = [s.step for s in env.steps if s.truncated]
-    if truncated:  # D14: a stored observation is no longer the full one; always visible
-        flags.stored_observation_truncated.append(Evidence(detail=f"steps {truncated[:20]}"))
     record.flags = {k: [e.model_dump() for e in v] for k, v in flags}
     record.flags_raised = flags.raised()
     record.tokens, record.cost_usd = _totals(env)
