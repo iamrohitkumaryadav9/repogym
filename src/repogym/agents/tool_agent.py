@@ -30,73 +30,11 @@ from repogym.providers.base import BadResponse, Message, ProviderError, ToolResu
 from repogym.tools.definitions import TOOLS
 
 SYSTEM_PROMPT = """You are a software engineer resolving a GitHub issue in a Python repository.
-The repository is at /work, checked out at the commit before the fix. Explore the code, reproduce
-the problem if you can, edit the source to fix it, run the relevant tests, and call submit.
+The repository is at /work, checked out at the commit before the fix. Use the tools to explore
+the code, reproduce the problem if you can, edit the source to fix it, and check your change.
 Hidden tests are run after you submit; changes to test files are discarded before grading.
-There is no network access.
-
-How to work:
-- In every reply, before your tool call, write one or two sentences: what you learned from the
-  last result and what you will do next. Your own messages are kept much longer than tool
-  results (see below), so write down what you'll need later: file paths, line numbers,
-  function names, the cause of the bug.
-- Find code with `grep -n`, then view narrow ranges (view_file shows at most 150 lines).
-- Once you understand the cause, edit the source (str_replace), run the relevant test
-  (run_tests), and submit. Don't keep exploring once the fix works.
-
-What you can see:
-{view}
-- After each tool result you'll see [step k/{max_steps}]: you have {max_steps} tool calls in
-  total."""
-
-VIEW_TEXT = {
-    "clip": (
-        "- A tool result longer than about {clip_tokens} tokens is shown with its middle cut out:"
-        " the start and end are kept, with a marker saying how much was removed."
-    ),
-    "obs_mask": (
-        "- Only the results of your last {keep_observations} tool calls are shown; older results"
-        " are replaced by a one-line placeholder. Your own messages and tool calls are kept."
-    ),
-    "sliding_window": (
-        "- When the conversation gets too long, the oldest steps (your messages, tool calls and"
-        " their results) are removed."
-    ),
-    "llm_summary": (
-        "- When the conversation gets too long, older steps are replaced by a summary written for"
-        " you; the most recent steps stay in full."
-    ),
-    "fallback": ("- If the conversation still doesn't fit, the oldest steps are removed."),
-}
-STRATEGY_VIEW = {
-    "sliding_window": ("clip", "sliding_window"),
-    "obs_mask": ("clip", "obs_mask", "fallback"),
-    "llm_summary": ("clip", "llm_summary", "fallback"),
-    "hybrid": ("clip", "obs_mask", "llm_summary", "fallback"),
-}
-STEP_COUNTER = "[step {k}/{n}]"
-FINAL_STEPS = 15  # one nudge when this many tool calls remain
-FINAL_NUDGE = (
-    "[You have used {k} of {n} tool calls. If you haven't fixed the issue yet, make the edit now;"
-    " then run the relevant test and submit.]"
-)
-REASONING_REMINDER = (
-    "[Reminder: before each tool call, write one or two sentences on what you learned and what"
-    " you'll do next.]"
-)
-REMIND_EVERY = 2  # consecutive replies without reasoning before a reminder
-
-
-def system_prompt_for(strategy: str, config, max_steps: int) -> str:
-    """The system prompt, describing exactly what this strategy shows the model."""
-    view = "\n".join(
-        VIEW_TEXT[part].format(
-            clip_tokens=config.clip_tokens, keep_observations=config.keep_observations
-        )
-        for part in STRATEGY_VIEW[strategy]
-    )
-    return SYSTEM_PROMPT.format(view=view, max_steps=max_steps)
-
+There is no network access. Call exactly the tools you need; when you are done, call submit.
+Older observations may be shortened or summarised to fit the context budget."""
 
 NO_TOOL_NUDGE = "You must call one of the tools. Call submit when you are done."
 SUMMARY_SYSTEM = (
@@ -260,27 +198,9 @@ class ToolAgent:
         if self.context.strategy in ("llm_summary", "hybrid"):
             self.context.summarizer = self.summarizer(env)
         budget = self.context.config.budget
-        max_steps = env.state().budgets.max_steps
         if self.system_prompt is None:
-            self.system_prompt = system_prompt_for(
-                self.context.strategy, self.context.config, max_steps
-            )
+            self.system_prompt = SYSTEM_PROMPT
         history: list[Message] = [Message(role="user", text=first.text)]
-        no_reason_streak, nudged = 0, False
-
-        def annotate(text: str, remind: bool) -> str:
-            """What the model sees after a tool result: the step counter, and nudges."""
-            nonlocal nudged
-            k = env.state().step_count
-            notes = [STEP_COUNTER.format(k=k, n=max_steps)]
-            if not nudged and k >= max_steps - FINAL_STEPS:
-                nudged = True
-                notes.append(FINAL_NUDGE.format(k=k, n=max_steps))
-                env.record_event("final_steps_nudge", {"step": k})
-            if remind:
-                notes.append(REASONING_REMINDER)
-                env.record_event("reasoning_reminder", {"step": k})
-            return f"{text}\n" + "\n".join(notes)
 
         while not env.state().done:
             try:
@@ -336,21 +256,12 @@ class ToolAgent:
                     metrics=metrics,
                     llm_calls=1,
                 )
-                history.append(Message(role="user", text=annotate(NO_TOOL_NUDGE, False)))
+                history.append(Message(role="user", text=NO_TOOL_NUDGE))
                 if self.progress:
                     self.progress(env.state().step_count)
                 if done:
                     return
                 continue
-            remind = False
-            if reply.text.strip():
-                no_reason_streak = 0
-            else:
-                # Not rejected: the call still runs. Recorded, and after REMIND_EVERY in a row
-                # the next result carries one short reminder.
-                no_reason_streak += 1
-                env.record_event("missing_reasoning", {"streak": no_reason_streak})
-                remind = no_reason_streak % REMIND_EVERY == 0
             results: list[ToolResult] = []
             for k, call in enumerate(reply.calls):
                 # The environment assigns a unique step id for the trajectory; the provider's
@@ -368,9 +279,6 @@ class ToolAgent:
                 results.append(ToolResult(call.id, call.name, observation.text))
                 if done:
                     break
-            # The counter (and any nudge) follows the last result of this reply.
-            last = results[-1]
-            results[-1] = ToolResult(last.call_id, last.name, annotate(last.output, remind))
             if self.progress:
                 self.progress(env.state().step_count)
             if env.state().done:

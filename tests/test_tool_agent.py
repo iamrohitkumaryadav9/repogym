@@ -156,7 +156,6 @@ def test_no_tool_reply_is_a_counted_nudge_and_bad_response_is_never_acted_on():
     assert [s.tool for s in env.steps] == [None, None, "submit"]
     assert env.steps[0].observation == NO_TOOL_NUDGE and "MAX_TOKENS" in env.steps[1].observation
     assert a.provider.seen[1][-1].text.startswith(NO_TOOL_NUDGE)  # the nudge is in the history
-    assert a.provider.seen[1][-1].text.endswith("[step 1/100]")
     assert len(a.provider.seen[2]) == len(a.provider.seen[1])  # the bad reply added nothing
 
 
@@ -371,60 +370,6 @@ def test_summary_omitted_events_are_counted_and_typed_in_the_trajectory():
 
 
 # -- D19: reasoning, view description, step counter --------------------------------------------
-
-
-def test_system_prompt_describes_exactly_what_each_strategy_shows():
-    from repogym.agents.tool_agent import system_prompt_for
-
-    cfg = ContextConfig(clip_tokens=2000, keep_observations=5)
-    masked = system_prompt_for("obs_mask", cfg, 75)
-    assert "last 5 tool calls" in masked and "about 2000 tokens" in masked
-    assert "[step k/75]" in masked and "summary" not in masked
-    window = system_prompt_for("sliding_window", cfg, 75)
-    assert "oldest steps" in window and "placeholder" not in window
-    hybrid = system_prompt_for("hybrid", cfg, 75)
-    assert "placeholder" in hybrid and "summary written for you" in hybrid
-    for text in (masked, window, hybrid):
-        assert "200000" not in text and "write one or two sentences" in text
-
-
-def test_step_counter_and_one_final_nudge_follow_tool_results():
-    script = [reply(("bash", {"command": f"echo {i}"})) for i in range(6)] + [reply(("submit", {}))]
-    a = agent(script)
-    env = run(a, Budgets(max_steps=20))  # the nudge comes when 15 calls remain: from step 5
-    shown = [m.results[-1].output for p in a.provider.seen[1:] for m in p[-1:]]
-    assert shown[0].endswith("[step 1/20]") and shown[4].splitlines()[-2] == "[step 5/20]"
-    nudges = [e for e in env.events if e.kind == "final_steps_nudge"]
-    assert len(nudges) == 1 and nudges[0].detail == {"step": 5}
-    assert sum("If you haven't fixed the issue yet" in t for t in shown) == 1
-    assert "[step" not in env.steps[0].observation  # the stored observation is unannotated
-
-
-def test_missing_reasoning_is_recorded_not_rejected_and_reminded_every_second_time():
-    bare = [reply(("bash", {"command": f"echo {i}"}), text="") for i in range(4)]
-    a = agent([*bare, reply(("submit", {}))])
-    env = run(a)
-    assert [s.tool for s in env.steps] == ["bash"] * 4 + ["submit"]  # every call still ran
-    missing = [e.detail["streak"] for e in env.events if e.kind == "missing_reasoning"]
-    assert missing == [1, 2, 3, 4]
-    assert [e.detail["step"] for e in env.events if e.kind == "reasoning_reminder"] == [2, 4]
-    reminded = [p[-1].results[-1].output for p in a.provider.seen[1:]]
-    assert ["Reminder:" in t for t in reminded] == [False, True, False, True]
-    acct = accounting.summarize(env.steps, env.events, a.model_name)
-    assert acct["missing_reasoning"] == 4 and acct["missing_reasoning_rate"] == 0.8
-    assert acct["reasoning_reminders"] == 2
-
-
-def test_reasoning_resets_the_streak():
-    script = [
-        reply(("bash", {"command": "a"}), text=""),
-        reply(("bash", {"command": "b"})),  # has reasoning
-        reply(("bash", {"command": "c"}), text=""),
-        reply(("submit", {})),
-    ]
-    env = run(agent(script))
-    assert [e.detail["streak"] for e in env.events if e.kind == "missing_reasoning"] == [1, 1]
-    assert not [e for e in env.events if e.kind == "reasoning_reminder"]
 
 
 def test_progress_hook_sees_every_model_call():
