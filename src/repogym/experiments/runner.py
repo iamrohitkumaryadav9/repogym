@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -36,78 +35,15 @@ from repogym.experiments import guard
 from repogym.experiments.spec import Cell, Experiment, release_tasks
 from repogym.harness import EpisodeRecord, _write_lock, run_episode
 from repogym.providers.gemini import GeminiProvider, GeminiSettings
-from repogym.ratelimit import AttemptLog, LimitsConfig, QuotaLedger, RateLimiter
+from repogym.ratelimit import LimitsConfig, QuotaLedger, RateLimiter
 
 log = structlog.get_logger()
 LEDGER_PATH = DATA_DIR / "quota" / "ledger.json"
-ATTEMPTS_DIR = DATA_DIR / "quota"  # attempts-<UTC day>.jsonl: every API attempt (D16)
 HARNESS_ERROR_RERUNS = 1
 # A cell gets at most this many api_failure attempts; then it is recorded as api_failure,
 # reported, and not retried (D16). Daily-quota interruptions don't count: they come from our
 # own quota scheduling, not the model, and are retried after the reset.
 MAX_API_FAILURES = 3
-
-
-class Heartbeat:
-    """In-progress state of one model's worker, for `repogym status` (one small JSON file)."""
-
-    def __init__(self, run_dir: Path, model: str, clock=time.time) -> None:
-        self.path = run_dir / "heartbeat" / f"{model}.json"
-        self.model, self.clock = model, clock
-        self.state: dict = {"model": model, "state": "starting"}
-
-    def _write(self, **changes) -> None:
-        self.state.update(changes, updated_at=self.clock())
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.state), encoding="utf-8")
-        os.replace(tmp, self.path)
-
-    def start(self, cell: str, attempt: int) -> None:
-        self.state = {"model": self.model}
-        self._write(
-            state="running",
-            cell=cell,
-            attempt=attempt,
-            episode_started_at=self.clock(),
-            step=0,
-            last_model_call_at=None,
-        )
-
-    def container(self, name: str) -> None:
-        self._write(container=name)
-
-    def progress(self, step: int) -> None:
-        self._write(step=step, last_model_call_at=self.clock())
-
-    def idle(self, termination: str | None) -> None:
-        self._write(state="between_episodes", last_termination=termination)
-
-    def sleeping(self, until: float, reason: str | None) -> None:
-        self._write(state="sleeping", sleeping_until=until, reason=reason)
-
-    def finished(self) -> None:
-        self._write(state="done")
-
-
-def write_pid_file(run_dir: Path, models: list[str]) -> Path:
-    """Record this runner's PID and process group in the run directory, so it can be stopped by
-    exactly that process group (never by a name pattern; RUNBOOK)."""
-    path = run_dir / "pids" / f"runner-{'+'.join(models)}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "pid": os.getpid(),
-                "pgid": os.getpgid(0),
-                "models": models,
-                "argv": sys.argv,
-                "started_at": time.time(),
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
 
 
 def gemini_api_key() -> str:
@@ -200,7 +136,7 @@ def provenance(experiment: Experiment, cell: Cell, previous: list[dict] | None =
     }
 
 
-def make_provider(model: str, settings: dict, api_key: str, limiter, policy=None, attempt_log=None):
+def make_provider(model: str, settings: dict, api_key: str, limiter, policy=None):
     if settings.get("provider", "gemini") != "gemini":
         raise ValueError(f"provider {settings.get('provider')!r} isn't wired into the runner yet")
     return GeminiProvider(
@@ -213,7 +149,6 @@ def make_provider(model: str, settings: dict, api_key: str, limiter, policy=None
         api_key=api_key,
         limiter=limiter,
         policy=policy,
-        attempt_log=attempt_log,
     )
 
 
@@ -237,7 +172,6 @@ class Runner:
         sleep=time.sleep,
         on_done: Callable[[EpisodeRecord], None] | None = None,
         guard_fn: Callable = guard.check,
-        attempt_log: AttemptLog | None = None,
     ) -> None:
         guard_fn(experiment, final_test_run)
         self.experiment, self.api_key = experiment, api_key
@@ -247,7 +181,6 @@ class Runner:
         self.clock, self.sleep, self.on_done = clock, sleep, on_done
         self.tasks = release_tasks(experiment.release)
         self.stop = threading.Event()
-        self.attempt_log = attempt_log if attempt_log is not None else AttemptLog(ATTEMPTS_DIR)
 
     def pending(self, model: str) -> list[Cell]:
         done = latest_records(self.experiment.run_dir)
@@ -265,20 +198,15 @@ class Runner:
             self.api_key,
             limiter,
             self.experiment.retry,
-            self.attempt_log,
         )
-        beat = Heartbeat(self.experiment.run_dir, model, self.clock)
         while not self.stop.is_set():
             cells = self.pending(model)
             if not cells:
-                beat.finished()
                 return
             cell = cells[0]
             previous = latest_records(self.experiment.run_dir).get(cell.key, [])
             attempt = len(previous) + 1
-            beat.start(cell.key, attempt)
             agent = make_agent(self.experiment, cell, provider)
-            agent.progress = beat.progress
             record = self.episode_fn(
                 self.tasks[cell.task_id],
                 agent,
@@ -289,9 +217,7 @@ class Runner:
                 episode_key=cell.key,
                 experiment=provenance(self.experiment, cell, previous),
                 attempt=attempt,
-                on_env=lambda env: beat.container(env.sandbox.name),
             )
-            beat.idle(record.termination)
             if self.on_done:
                 self.on_done(record)
             # Daily quota, or an episode stalled past the elapsed safety cap by throttling:
@@ -305,23 +231,14 @@ class Runner:
                 log.warning(
                     "sleep_until_reset", model=model, seconds=round(wait), why=record.done_reason
                 )
-                beat.sleeping(self.clock() + wait, record.done_reason or record.error_type)
                 self.sleep(wait)
             elif record.termination == "api_failure":
-                beat.sleeping(self.clock() + 60, record.error_type)
                 self.sleep(60)  # per-minute exhaustion or an outage: brief pause, then retry
 
-    def run(self, models: list[str] | None = None) -> None:
-        """Run every model's worker, or only ``models`` (e.g. to start one model after its
-        quota reset). The experiment, its cells and provenance are the same either way."""
-        unknown = sorted(set(models or []) - set(self.experiment.models))
-        if unknown:
-            raise ValueError(f"models not in the experiment: {unknown}")
-        selected = models or self.experiment.models
-        pid_file = write_pid_file(self.experiment.run_dir, selected)
+    def run(self) -> None:
         threads = [
             threading.Thread(target=self.worker, args=(m,), name=f"worker-{m}", daemon=True)
-            for m in selected
+            for m in self.experiment.models
         ]
         for t in threads:
             t.start()
@@ -331,6 +248,3 @@ class Runner:
         except KeyboardInterrupt:
             self.stop.set()
             raise
-        finally:
-            info = json.loads(pid_file.read_text(encoding="utf-8"))
-            pid_file.write_text(json.dumps(info | {"ended_at": time.time()}), encoding="utf-8")

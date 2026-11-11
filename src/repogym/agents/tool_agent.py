@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from repogym.context.base import ContextOverflow, Unit, clip_text
@@ -132,8 +131,6 @@ class ToolAgent:
     version: str = "1.0"
     system_prompt: str | None = None  # built per strategy and step budget when None
     settings: dict = field(default_factory=dict)  # recorded in provenance
-    # Called with the env step count after every model call (the runner's heartbeat).
-    progress: Callable[[int], None] | None = None
 
     @property
     def model_name(self) -> str:
@@ -226,8 +223,6 @@ class ToolAgent:
                     model_name=self.provider.name,
                     llm_calls=1,
                 )
-                if self.progress:
-                    self.progress(env.state().step_count)
                 if done:
                     return
                 continue
@@ -256,8 +251,6 @@ class ToolAgent:
                     llm_calls=1,
                 )
                 history.append(Message(role="user", text=NO_TOOL_NUDGE))
-                if self.progress:
-                    self.progress(env.state().step_count)
                 if done:
                     return
                 continue
@@ -278,8 +271,6 @@ class ToolAgent:
                 results.append(ToolResult(call.id, call.name, observation.text))
                 if done:
                     break
-            if self.progress:
-                self.progress(env.state().step_count)
             if env.state().done:
                 return
             history.append(Message(role="tool", results=results))

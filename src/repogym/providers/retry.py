@@ -11,7 +11,7 @@
   Both kinds share ``max_attempts`` (6) tries; after that the call fails (``api_failure``).
 * Any other 4xx: rejected at once.
 
-Every attempt is recorded with its time, and can be streamed to an attempt log.
+Every attempt is recorded with its time.
 """
 
 from __future__ import annotations
@@ -101,7 +101,6 @@ def _run_with_retries(
     rng: random.Random | None = None,
     before_attempt: Callable[[], None] | None = None,
     on_daily: Callable[[], float | None] | None = None,
-    on_attempt: Callable[[Attempt], None] | None = None,
     wall: Callable[[], float] = time.time,
 ):
     rng = rng or random.Random()
@@ -110,8 +109,6 @@ def _run_with_retries(
 
     def add(attempt: Attempt) -> None:
         attempts.append(attempt)
-        if on_attempt is not None:
-            on_attempt(attempt)
 
     def pause_for_reset(reset_at: float | None, status, quota_ids) -> bool:
         """Hold in place until the reset; False if pausing isn't allowed (any more)."""

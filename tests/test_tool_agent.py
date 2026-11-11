@@ -357,14 +357,6 @@ def test_waits_inside_a_bad_response_are_excluded_too():
     assert env.state().waiting_seconds >= 5_000.0
 
 
-def test_progress_hook_sees_every_model_call():
-    seen = []
-    a = agent([reply(("bash", {"command": "ls"})), reply(text="hmm"), reply(("submit", {}))])
-    a.progress = seen.append
-    run(a)
-    assert seen == [1, 2, 3]  # after every model call, including the final submit
-
-
 def test_replayed_thinking_is_counted_exactly_in_the_estimate():
     est = TokenEstimator()
     plain = Message(role="assistant", text="x", raw={"role": "model"}, provider="fake")

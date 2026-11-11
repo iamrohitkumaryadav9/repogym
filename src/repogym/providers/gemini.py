@@ -141,7 +141,6 @@ class GeminiProvider:
         policy: RetryPolicy | None = None,
         client=None,
         sleep=time.sleep,
-        attempt_log=None,
     ) -> None:
         from google import genai
         from google.genai import types
@@ -155,19 +154,6 @@ class GeminiProvider:
         self.limiter = limiter or NullLimiter()
         self.policy = policy or RetryPolicy()
         self._sleep = sleep
-        self.attempt_log = attempt_log  # every attempt, for reliability analysis (D16)
-
-    def _attempt_logger(self):
-        """A per-call callback numbering this call's attempts into the attempt log."""
-        if self.attempt_log is None:
-            return None
-        counter = {"n": 0}
-
-        def record(attempt) -> None:
-            counter["n"] += 1
-            self.attempt_log.record(self.settings.model, attempt, counter["n"])
-
-        return record
 
     def _config(self, system: str, tools: list[dict]):
         from google.genai import types
@@ -214,7 +200,6 @@ class GeminiProvider:
                 sleep=self._sleep,
                 before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
                 on_daily=self.limiter.mark_daily_exhausted,
-                on_attempt=self._attempt_logger(),
             )
         except ProviderError as exc:
             exc.wait_seconds += sum(waits)  # the limiter's share (D17)
@@ -282,7 +267,6 @@ class GeminiProvider:
                 sleep=self._sleep,
                 before_attempt=lambda: waits.append(self.limiter.acquire(estimated_tokens) or 0.0),
                 on_daily=self.limiter.mark_daily_exhausted,
-                on_attempt=self._attempt_logger(),
             )
         except ProviderError as exc:
             exc.wait_seconds += sum(waits)  # the limiter's share (D17)

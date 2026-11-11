@@ -340,38 +340,6 @@ def test_elapsed_cap_waits_for_the_reset_and_counts_as_an_api_failure(tmp_path):
     assert [r["termination"] for r in records] == ["api_failure", "submitted"]
 
 
-def test_heartbeat_tracks_the_worker_and_status_shows_it(tmp_path):
-    import json as _json
-
-    from repogym.experiments.runner import Heartbeat
-
-    exp = write_exp(tmp_path, models=["gemma-4-26b-a4b-it"], tasks=DEV[:1])
-    t = [1_800_000_000.0]
-    beat = Heartbeat(exp.run_dir, "gemma-4-26b-a4b-it", clock=lambda: t[0])
-    beat.start("cell-1", 2)
-    t[0] += 30
-    beat.progress(7)
-    t[0] += 45
-    row = summary(exp, now=t[0], ledger=QuotaLedger(tmp_path / "ledger.json"))[0]
-    w = row["worker"]
-    assert w["state"] == "running" and w["cell"] == "cell-1" and w["attempt"] == 2
-    assert w["step"] == 7 and w["seconds_since_model_call"] == 45 and w["episode_seconds"] == 75
-    beat.sleeping(t[0] + 600, "ProviderUnavailable")
-    w = summary(exp, now=t[0] + 100, ledger=QuotaLedger(tmp_path / "ledger.json"))[0]["worker"]
-    assert w["state"] == "sleeping" and w["sleep_remaining_seconds"] == 500
-    beat.finished()
-    stored = _json.loads((exp.run_dir / "heartbeat" / "gemma-4-26b-a4b-it.json").read_text())
-    assert stored["state"] == "done"
-
-
-def test_a_full_run_leaves_a_done_heartbeat_per_model(tmp_path):
-    exp = write_exp(tmp_path)
-    runner(exp, FakeEpisodes(), tmp_path).run()
-    rows = summary(exp, now=1_800_000_000.0, ledger=QuotaLedger(tmp_path / "ledger.json"))
-    assert all(r["worker"]["state"] == "done" for r in rows)
-    assert all(r["attempts"] == 2 and r["cells_retried"] == 0 for r in rows)
-
-
 def test_episode_files_are_never_overwritten(tmp_path):
     from repogym.harness import file_stem, unique_stem
 
@@ -395,17 +363,6 @@ def test_the_committed_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp
         check(pilot, tmp_path / "none.md", tmp_path, final=False)
     with pytest.raises(guard.RunRefused):
         check(pilot, tmp_path / "none.md", tmp_path, final=True)
-
-
-def test_a_run_can_be_limited_to_some_models(tmp_path):
-    exp = write_exp(tmp_path)
-    episodes = FakeEpisodes()
-    runner(exp, episodes, tmp_path).run(["gemma-4-26b-a4b-it"])
-    assert {k.split("__")[0] for k in episodes.calls} == {"gemma-4-26b-a4b-it"}
-    runner(exp, episodes, tmp_path).run()  # the rest later, same experiment
-    assert sorted(episodes.calls) == sorted(c.key for c in exp.cells())
-    with pytest.raises(ValueError, match="not in the experiment"):
-        runner(exp, episodes, tmp_path).run(["gpt-x"])
 
 
 def test_the_repilot_is_dev_only_on_new_tasks(tmp_path):

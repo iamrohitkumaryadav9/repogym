@@ -26,7 +26,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -220,28 +220,3 @@ class RateLimiter:
                 "requests": len(self._window),
                 "tokens": sum(tokens for _, tokens in self._window),
             }
-
-
-class AttemptLog:
-    """Every API attempt (time, model, status, kind, attempt number within its call), one JSON
-    line each, in a file per UTC day. The basis for error rates by hour (D16)."""
-
-    def __init__(self, directory: Path) -> None:
-        self.directory = directory
-        self._lock = threading.Lock()
-
-    def record(self, model: str, attempt, number: int) -> None:
-        at = attempt.at or time.time()
-        day = datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%d")
-        row = {
-            "at": round(at, 3),
-            "model": model,
-            "attempt": number,
-            "status": attempt.status,
-            "kind": attempt.kind,
-            "slept": round(attempt.slept or 0.0, 3),
-        }
-        with self._lock:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            with (self.directory / f"attempts-{day}.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")

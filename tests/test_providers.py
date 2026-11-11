@@ -482,22 +482,3 @@ def test_a_daily_429_also_pauses_but_only_once_per_call():
     assert without.sleeps == []  # pausing is off by default
 
 
-def test_every_attempt_is_streamed_to_the_attempt_log():
-    seen = []
-    retry(scripted([500, 503, 200]), Clock(), on_attempt=seen.append)
-    assert [a.status for a in seen] == [500, 503, 200] and all(a.at for a in seen)
-
-
-def test_attempt_log_numbers_each_calls_attempts_per_utc_day(tmp_path):
-    import json as _json
-
-    from repogym.ratelimit import AttemptLog
-
-    log = AttemptLog(tmp_path)
-    p = provider([api_error(500, {}), response([types.Part(text="ok")])])
-    p.attempt_log = log
-    p.generate("s", [Message(role="user", text="t")], TOOLS)
-    files = list(tmp_path.glob("attempts-*.jsonl"))
-    rows = [_json.loads(x) for x in files[0].read_text().splitlines()]
-    assert len(files) == 1 and [(r["attempt"], r["status"]) for r in rows] == [(1, 500), (2, 200)]
-    assert all(r["model"] == "gemma-4-26b-a4b-it" and r["at"] for r in rows)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections import Counter
 from datetime import datetime
@@ -25,25 +24,6 @@ def _seconds(record: dict) -> float | None:
     except (KeyError, TypeError, ValueError):
         return None
     return (end - start).total_seconds()
-
-
-def heartbeat(experiment: Experiment, model: str, now: float) -> dict | None:
-    """The worker's in-progress state, with ages in seconds (None if it never started)."""
-    path = experiment.run_dir / "heartbeat" / f"{model}.json"
-    try:
-        beat = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    for key, label in (
-        ("updated_at", "seconds_since_update"),
-        ("last_model_call_at", "seconds_since_model_call"),
-        ("episode_started_at", "episode_seconds"),
-    ):
-        if beat.get(key):
-            beat[label] = round(now - beat[key])
-    if beat.get("sleeping_until"):
-        beat["sleep_remaining_seconds"] = max(round(beat["sleeping_until"] - now), 0)
-    return beat
 
 
 def summary(
@@ -88,7 +68,6 @@ def summary(
                 "cells_given_up": sum(
                     counted_api_failures(v) >= MAX_API_FAILURES for v in attempts.values()
                 ),
-                "worker": heartbeat(experiment, model, now),
                 "mean_episode_minutes": round(mean / 60, 1) if mean else None,
                 "eta_hours": round(remaining * mean / 3600, 1) if mean else None,
             }
