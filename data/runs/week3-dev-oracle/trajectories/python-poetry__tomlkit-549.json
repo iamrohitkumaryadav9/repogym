@@ -1,7 +1,7 @@
 {
  "schema_version": "ATIF-v1.8",
  "session_id": "week3-dev-oracle",
- "trajectory_id": "8bb212f44ec53778",
+ "trajectory_id": "f4f5ea86740f289a",
  "agent": {
   "name": "repogym-oracle",
   "version": "1.0",
@@ -139,19 +139,19 @@
  "steps": [
   {
    "step_id": 1,
-   "timestamp": "2026-11-09T10:31:43.516Z",
+   "timestamp": "2026-11-11T06:21:59.661Z",
    "source": "system",
    "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
   },
   {
    "step_id": 2,
-   "timestamp": "2026-11-09T10:31:43.516Z",
+   "timestamp": "2026-11-11T06:21:59.661Z",
    "source": "user",
    "message": "# AoT captures too many keys\n\n```python\n#!/usr/bin/env python3\n\nimport tomlkit\n\n\ndoc = tomlkit.parse(\"a.b = 1\\nc.d = 2\\n\")\naot = tomlkit.aot()\nt = tomlkit.table()\nt[\"x\"] = 9\naot.append(t)\ndoc[\"a\"] = aot\nprint(tomlkit.dumps(doc))\n```\nresult\n```\n[[a]]\nx = 9\nc.d = 2\n```\nin which `c.d` has wrongly been captured by the array of tables.\n\nSimilar in flavour to other recent bug reports and fixes, I expect the fix will be nearby too."
   },
   {
    "step_id": 3,
-   "timestamp": "2026-11-09T10:31:43.516Z",
+   "timestamp": "2026-11-11T06:21:59.661Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -168,7 +168,7 @@
      "exit_code": null,
      "truncated": false,
      "timed_out": false,
-     "seconds": 0.22,
+     "seconds": 0.32,
      "raw_chars": 43
     }
    },
@@ -186,7 +186,7 @@
   },
   {
    "step_id": 4,
-   "timestamp": "2026-11-09T10:31:43.811Z",
+   "timestamp": "2026-11-11T06:22:00.090Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -235,8 +235,8 @@
      "reverts": [],
      "graded_patch_lines": 23,
      "error": "",
-     "peak_memory_bytes": 75956224,
-     "seconds": 4.0
+     "peak_memory_bytes": 75907072,
+     "seconds": 4.5
     },
     "flags": {
      "git_history_commands": [],
@@ -250,8 +250,7 @@
      "symlinks_outside_repo": [],
      "budget_exhausted": [],
      "gold_content_in_observations": [],
-     "source_references_test_harness": [],
-     "stored_observation_truncated": []
+     "source_references_test_harness": []
     },
     "flags_raised": [],
     "done_reason": "submitted",
@@ -265,12 +264,13 @@
    "task_id": "python-poetry__tomlkit-549",
    "release": "v0.1",
    "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
-   "episode_id": "8bb212f44ec53778",
+   "episode_id": "f4f5ea86740f289a",
    "image_digest": "sha256:c4632c7bae6dfd77076b4706a78ca49a888242e76994338be39f25f98016923d",
-   "repogym_commit": "ff3aad34aba5318ca3b02537b4357c58dc89a263",
+   "repogym_commit": "1ca3b077ff5a3088fe666456d1504c9b2cfdd1b7",
    "budgets": {
     "max_steps": 100,
     "max_wall_seconds": 1800,
+    "max_elapsed_seconds": null,
     "max_total_observation_chars": 1000000,
     "command_timeout_seconds": 120,
     "run_tests_timeout_seconds": 300,

@@ -1,7 +1,7 @@
 {
  "schema_version": "ATIF-v1.8",
  "session_id": "week3-dev-oracle",
- "trajectory_id": "bb8d36731a63baa5",
+ "trajectory_id": "c28d611e1f7415bc",
  "agent": {
   "name": "repogym-oracle",
   "version": "1.0",
@@ -139,19 +139,19 @@
  "steps": [
   {
    "step_id": 1,
-   "timestamp": "2026-11-09T10:32:46.571Z",
+   "timestamp": "2026-11-11T06:23:04.598Z",
    "source": "system",
    "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
   },
   {
    "step_id": 2,
-   "timestamp": "2026-11-09T10:32:46.571Z",
+   "timestamp": "2026-11-11T06:23:04.598Z",
    "source": "user",
    "message": "# `TypeError: a bytes-like object is required, not 'str'` in enum brain\n\n### Steps to reproduce\n\nThe following code triggers a `TypeError` in astroid:\n\n```python\nfrom enum import Enum\n\nEnum('', b'')\n```\n\nI found the bug during a local fuzzing run.\n\n### Current behavior\n```python-traceback\nTraceback (most recent call last):\n  File \"pylint/pylint/checkers/utils.py\", line 1374, in safe_infer\n    value = next(infer_gen)\n  File \"astroid/astroid/nodes/node_ng.py\", line 140, in infer\n    for result in self._explicit_inference(\n                  ~~~~~~~~~~~~~~~~~~~~~~~~^\n        self,  # type: ignore[arg-type]\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        context,\n        ^^^^^^^^\n    ):\n    ^\n  File \"astroid/astroid/inference_tip.py\", line 67, in inner\n    raise e from None\n  File \"astroid/astroid/inference_tip.py\", line 64, in inner\n    result = _cache[func, node, context] = list(func(node, context))\n                                                ~~~~^^^^^^^^^^^^^^^\n  File \"astroid/astroid/brain/brain_namedtuple_enum.py\", line 366, in infer_enum\n    class_node = infer_func_form(\n                 ~~~~~~~~~~~~~~~^\n        node,\n        ^^^^^\n    ...<3 lines>...\n        enum=True,\n        ^^^^^^^^^^\n    )[0]\n    ^\n  File \"astroid/astroid/brain/brain_namedtuple_enum.py\", line 94, in infer_func_form\n    attributes: list[str] = names.value.replace(\",\", \" \").split()\n                            ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\nTypeError: a bytes-like object is required, not 'str'\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"pylint/pylint/utils/ast_walker.py\", line 87, in walk\n    callback(astroid)\n    ~~~~~~~~^^^^^^^^^\n  File \"pylint/pylint/checkers/base/basic_checker.py\", line 475, in visit_expr\n    inferred = utils.safe_infer(expr) if name[:1].isupper() else None\n               ~~~~~~~~~~~~~~~~^^^^^^\n  File \"pylint/pylint/checkers/utils.py\", line 1378, in safe_infer\n    raise AstroidError from e\nastroid.exceptions.AstroidError\n```\n\n### Expected behavior\nNo crash\n\n### Version info\npylint-dev/astroid@5f428849d\npylint-dev/pylint@e95c41667\nPython 3.14.6"
   },
   {
    "step_id": 3,
-   "timestamp": "2026-11-09T10:32:46.571Z",
+   "timestamp": "2026-11-11T06:23:04.598Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -186,7 +186,7 @@
   },
   {
    "step_id": 4,
-   "timestamp": "2026-11-09T10:32:46.922Z",
+   "timestamp": "2026-11-11T06:23:04.950Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -221,7 +221,7 @@
   },
   {
    "step_id": 5,
-   "timestamp": "2026-11-09T10:32:47.265Z",
+   "timestamp": "2026-11-11T06:23:05.306Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -270,8 +270,8 @@
      "reverts": [],
      "graded_patch_lines": 48,
      "error": "",
-     "peak_memory_bytes": 164143104,
-     "seconds": 12.2
+     "peak_memory_bytes": 120819712,
+     "seconds": 13.5
     },
     "flags": {
      "git_history_commands": [],
@@ -285,8 +285,7 @@
      "symlinks_outside_repo": [],
      "budget_exhausted": [],
      "gold_content_in_observations": [],
-     "source_references_test_harness": [],
-     "stored_observation_truncated": []
+     "source_references_test_harness": []
     },
     "flags_raised": [],
     "done_reason": "submitted",
@@ -300,12 +299,13 @@
    "task_id": "pylint-dev__astroid-3192",
    "release": "v0.1",
    "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
-   "episode_id": "bb8d36731a63baa5",
+   "episode_id": "c28d611e1f7415bc",
    "image_digest": "sha256:c75d6b78f8d2dc408807bb0db675deac4002c075a2a5bb4c451868ec389e5aa1",
-   "repogym_commit": "ff3aad34aba5318ca3b02537b4357c58dc89a263",
+   "repogym_commit": "1ca3b077ff5a3088fe666456d1504c9b2cfdd1b7",
    "budgets": {
     "max_steps": 100,
     "max_wall_seconds": 1800,
+    "max_elapsed_seconds": null,
     "max_total_observation_chars": 1000000,
     "command_timeout_seconds": 120,
     "run_tests_timeout_seconds": 300,

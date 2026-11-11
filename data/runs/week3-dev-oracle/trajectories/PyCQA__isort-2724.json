@@ -1,7 +1,7 @@
 {
  "schema_version": "ATIF-v1.8",
  "session_id": "week3-dev-oracle",
- "trajectory_id": "26b803c1b2cb19c9",
+ "trajectory_id": "7816af687a7782bf",
  "agent": {
   "name": "repogym-oracle",
   "version": "1.0",
@@ -139,19 +139,19 @@
  "steps": [
   {
    "step_id": 1,
-   "timestamp": "2026-11-09T10:34:05.243Z",
+   "timestamp": "2026-11-11T06:24:38.468Z",
    "source": "system",
    "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
   },
   {
    "step_id": 2,
-   "timestamp": "2026-11-09T10:34:05.243Z",
+   "timestamp": "2026-11-11T06:24:38.468Z",
    "source": "user",
    "message": "# combine_straight_imports mixes up module names on long lines since 9.0.0\n\nSince 9.0.0, `combine_straight_imports` can change which modules a file imports. With 9.0.2 and otherwise default settings:\n\n```console\n$ printf 'import email.message\\nimport email.utils\\nimport http.cookies\\nimport importlib.util\\nimport os.path\\nimport urllib.parse\\nimport warnings\\n' > m.py\n$ isort --csi m.py\nFixing /tmp/demo/m.py\n$ cat m.py\nimport email.message, email.utils, http.cookies, importlib.util, os.\\\n    parse, warnings.path, urllib\n$ python m.py\nTraceback (most recent call last):\n  File \"/tmp/demo/m.py\", line 1, in <module>\n    import email.message, email.utils, http.cookies, importlib.util, os.\\\nModuleNotFoundError: No module named 'os.parse'; 'os' is not a package\n```\n\n8.0.1 leaves the combined line as it is, even though it is longer than the line length.\n\nIn CPython 3.12's [`Lib/http/server.py`](https://github.com/python/cpython/blob/v3.12.15/Lib/http/server.py#L90-L106), where `import socket` has a comment, the comment also lands in the middle of the line and comments out most of the imports:\n\n```python\nimport copy, datetime, email.utils, html, http.\\\n    parse  # For gethostbyaddr().client, io, itertools, mimetypes, os, posixpath, select, shutil, socket, socketserver, sys, time, urllib\n```\n\nWith `--profile black` the result for `m.py` does not even parse:\n\n```python\nimport email.message, email.utils, http.cookies, importlib.util, os.path, urllib.(\n    parse, warnings,\n)\n```\n\nBisecting points at 2b07aa52 (#2568), which sends the combined line through `wrap.line()` in every wrap mode so that NOQA mode can add `# NOQA`. `wrap.line()` splits it at the dots and joins the pieces it moves to the next line in reverse order. For single straight imports the same commit only calls `wrap.line()` in NOQA mode, and doing the same for the combined line fixes it. I'll open a pull request with that change and a regression test."
   },
   {
    "step_id": 3,
-   "timestamp": "2026-11-09T10:34:05.243Z",
+   "timestamp": "2026-11-11T06:24:38.468Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -168,7 +168,7 @@
      "exit_code": null,
      "truncated": false,
      "timed_out": false,
-     "seconds": 0.22,
+     "seconds": 0.27,
      "raw_chars": 37
     }
    },
@@ -186,7 +186,7 @@
   },
   {
    "step_id": 4,
-   "timestamp": "2026-11-09T10:34:05.525Z",
+   "timestamp": "2026-11-11T06:24:38.817Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -235,8 +235,8 @@
      "reverts": [],
      "graded_patch_lines": 15,
      "error": "",
-     "peak_memory_bytes": 71106560,
-     "seconds": 5.5
+     "peak_memory_bytes": 70320128,
+     "seconds": 8.6
     },
     "flags": {
      "git_history_commands": [],
@@ -250,8 +250,7 @@
      "symlinks_outside_repo": [],
      "budget_exhausted": [],
      "gold_content_in_observations": [],
-     "source_references_test_harness": [],
-     "stored_observation_truncated": []
+     "source_references_test_harness": []
     },
     "flags_raised": [],
     "done_reason": "submitted",
@@ -265,12 +264,13 @@
    "task_id": "PyCQA__isort-2724",
    "release": "v0.1",
    "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
-   "episode_id": "26b803c1b2cb19c9",
+   "episode_id": "7816af687a7782bf",
    "image_digest": "sha256:35a2484b9aff69959407f3d21388bad41f5f463ef07d223eb533271a7b6c30e9",
-   "repogym_commit": "ff3aad34aba5318ca3b02537b4357c58dc89a263",
+   "repogym_commit": "1ca3b077ff5a3088fe666456d1504c9b2cfdd1b7",
    "budgets": {
     "max_steps": 100,
     "max_wall_seconds": 1800,
+    "max_elapsed_seconds": null,
     "max_total_observation_chars": 1000000,
     "command_timeout_seconds": 120,
     "run_tests_timeout_seconds": 300,

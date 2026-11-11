@@ -1,7 +1,7 @@
 {
  "schema_version": "ATIF-v1.8",
  "session_id": "week3-dev-oracle",
- "trajectory_id": "73741cac216c6b73",
+ "trajectory_id": "7d741be2ab32201e",
  "agent": {
   "name": "repogym-oracle",
   "version": "1.0",
@@ -139,19 +139,19 @@
  "steps": [
   {
    "step_id": 1,
-   "timestamp": "2026-11-09T10:30:07.281Z",
+   "timestamp": "2026-11-11T06:20:06.357Z",
    "source": "system",
    "message": "You are working in a Python repository at /work, checked out at the commit before an issue was fixed. Resolve the issue below by editing the source code. Hidden tests will be run against your changes after you submit; changes to test files are discarded before grading.\n\nTools: bash, view_file, str_replace, create_file, run_tests, submit. There is no network access. Budgets: 100 tool calls, 1800 s wall-clock, 120 s per command; long outputs are truncated to 10000 characters. Call submit when you are done."
   },
   {
    "step_id": 2,
-   "timestamp": "2026-11-09T10:30:07.281Z",
+   "timestamp": "2026-11-11T06:20:06.357Z",
    "source": "user",
    "message": "# Optional inner validators for `deep_mapping`\n\nThis is a copy of the fourth issue collected in https://github.com/python-attrs/attrs/issues/1206 to enable separate tracking of the bug.\r\n\r\n### The issue\r\nFor `deep_iterable`, only the `iterable_validator` is optional, which makes sense because if no `member_validator` was provided, one should simply use a regular validator in the first place. However, for `deep_mapping`, both `value_validator` and `key_validator` are required. This makes its use unnecessarily complicated in certain situations. For example, validating only dictionary keys requires a rather cumbersome workaround and also results in unnecessary calls of the `value_validator`:\r\n```python\r\n@define\r\nclass B:\r\n    x: Dict[str, Any] = field(\r\n        validator=deep_mapping(\r\n            key_validator=and_(instance_of(str), min_len(1)),\r\n            value_validator=lambda *x: None,\r\n        )\r\n    )\r\n```\r\nInstead, I guess the user-friendly way would be to check that **at least one of them** is provided, but not necessarily both."
   },
   {
    "step_id": 3,
-   "timestamp": "2026-11-09T10:30:07.282Z",
+   "timestamp": "2026-11-11T06:20:06.358Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -168,7 +168,7 @@
      "exit_code": null,
      "truncated": false,
      "timed_out": false,
-     "seconds": 0.22,
+     "seconds": 0.32,
      "raw_chars": 44
     }
    },
@@ -186,7 +186,7 @@
   },
   {
    "step_id": 4,
-   "timestamp": "2026-11-09T10:30:07.622Z",
+   "timestamp": "2026-11-11T06:20:06.767Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -203,7 +203,7 @@
      "exit_code": null,
      "truncated": false,
      "timed_out": false,
-     "seconds": 0.22,
+     "seconds": 0.27,
      "raw_chars": 44
     }
    },
@@ -221,7 +221,7 @@
   },
   {
    "step_id": 5,
-   "timestamp": "2026-11-09T10:30:07.970Z",
+   "timestamp": "2026-11-11T06:20:07.121Z",
    "source": "agent",
    "message": "",
    "observation": {
@@ -270,8 +270,8 @@
      "reverts": [],
      "graded_patch_lines": 96,
      "error": "",
-     "peak_memory_bytes": 64700416,
-     "seconds": 4.0
+     "peak_memory_bytes": 64729088,
+     "seconds": 5.3
     },
     "flags": {
      "git_history_commands": [],
@@ -285,8 +285,7 @@
      "symlinks_outside_repo": [],
      "budget_exhausted": [],
      "gold_content_in_observations": [],
-     "source_references_test_harness": [],
-     "stored_observation_truncated": []
+     "source_references_test_harness": []
     },
     "flags_raised": [],
     "done_reason": "submitted",
@@ -300,12 +299,13 @@
    "task_id": "python-attrs__attrs-1448",
    "release": "v0.1",
    "tasks_sha256": "9c5bb760ef13d87f7cbdeec42624461033a70edf1c664f9de6de4482d6307362",
-   "episode_id": "73741cac216c6b73",
+   "episode_id": "7d741be2ab32201e",
    "image_digest": "sha256:ef8bb388f15050a9f9945ef67214730c32456796adcad96d6e1211ef1b865df9",
-   "repogym_commit": "ff3aad34aba5318ca3b02537b4357c58dc89a263",
+   "repogym_commit": "1ca3b077ff5a3088fe666456d1504c9b2cfdd1b7",
    "budgets": {
     "max_steps": 100,
     "max_wall_seconds": 1800,
+    "max_elapsed_seconds": null,
     "max_total_observation_chars": 1000000,
     "command_timeout_seconds": 120,
     "run_tests_timeout_seconds": 300,
