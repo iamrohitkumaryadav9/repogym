@@ -220,6 +220,3 @@ class OpenAICompatProvider:
             attempts=attempts,
             limiter_wait_seconds=waited,
         )
-
-    def count_tokens(self, system: str, messages: list[Message], tools: list[dict]) -> int | None:
-        return None  # no standard counting endpoint; the estimator is used

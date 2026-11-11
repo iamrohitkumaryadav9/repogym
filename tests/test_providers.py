@@ -12,7 +12,6 @@ from repogym.providers.base import (
     Message,
     ProviderUnavailable,
     RequestRejected,
-    ToolCall,
     ToolResult,
 )
 from repogym.providers.gemini import GeminiProvider, GeminiSettings, from_content, to_contents
@@ -365,33 +364,6 @@ class FakeHttp:
         self.posts.append((url, headers, json))
         status, payload = self.status, self.payload
         return type("R", (), {"status_code": status, "json": lambda self: payload})()
-
-
-def test_count_tokens_counts_the_whole_request_via_generate_content_request():
-    http = FakeHttp()
-    p = provider([])
-    p._http = http
-    reply = Message(
-        role="assistant",
-        calls=[ToolCall(id="c1", name="bash", args={"command": "ls"})],
-        provider="gemini",
-        raw=response([call_part()])
-        .candidates[0]
-        .content.model_dump(mode="json", exclude_none=True),
-    )
-    history = [Message(role="user", text="task"), reply]
-    assert p.count_tokens("system text", history, TOOLS) == 505
-    url, headers, body = http.posts[0]
-    assert url.endswith("/gemma-4-26b-a4b-it:countTokens") and headers["x-goog-api-key"] == "unused"
-    request = body["generateContentRequest"]
-    assert set(body) == {"generateContentRequest"}  # never contents + request together
-    assert request["systemInstruction"]["parts"][0]["text"] == "system text"
-    assert request["tools"][0]["functionDeclarations"]
-    assert "thoughtSignature" in request["contents"][1]["parts"][0]  # counted as sent
-    p._http = FakeHttp(status=400)
-    assert p.count_tokens("s", history, TOOLS) is None  # the estimator is the fallback
-    foreign = Message(role="assistant", text="x", raw={"x": 1}, provider="openai")
-    assert p.count_tokens("s", [history[0], foreign], TOOLS) is None  # never raises
 
 
 def test_replies_with_thought_text_carry_their_replay_cost():

@@ -646,8 +646,7 @@ def status(experiment: Annotated[Path, typer.Option(help="Experiment file.")]) -
             f"{row['requests_today']}/{row['rpd_limit']}"
             f"{' (EXHAUSTED)' if row['quota_exhausted_today'] else ''} | tokens in "
             f"{row['input_tokens']:,} out {row['output_tokens']:,} | violations "
-            f"{row['budget_violations']}, summary omitted {row['summary_omitted']}, "
-            f"missing reasoning {row['missing_reasoning']} | {row['terminations']} | "
+            f"{row['budget_violations']} | {row['terminations']} | "
             f"~{row['mean_episode_minutes']} min/episode, ETA {row['eta_hours']} h"
         )
         w = row["worker"]

@@ -39,13 +39,11 @@ class ContextManager:
         config: ContextConfig,
         estimator: TokenEstimator,
         summarizer: Summarizer | None = None,
-        counter=None,
     ) -> None:
         if strategy not in STRATEGIES:
             raise ValueError(f"unknown strategy {strategy!r}; choose from {STRATEGIES}")
         self.strategy, self.config, self.estimator = strategy, config, estimator
         self.summarizer = summarizer
-        self.counter = counter  # optional exact count (countTokens), used to verify the fit
         self.summary: str | None = None
         self.summary_covers = 0  # units 1..n are represented by the summary
         self.summary_calls: list[dict] = []  # metrics of each summary call
@@ -104,10 +102,9 @@ class ContextManager:
         units: list[Unit],
         rendered: dict[int, list[Message]],
         states: dict[int, str],
-        show_summary: bool = True,
     ) -> list[Message]:
         head = task.copy()
-        if show_summary and self.summary and self.summary_covers:
+        if self.summary and self.summary_covers:
             head.extra_text = [*task.extra_text, SUMMARY_HEADER + self.summary]
         messages = [head]
         for unit in units:
@@ -182,47 +179,19 @@ class ContextManager:
 
         # Drop the oldest whole units until it fits (sliding_window's rule; the others' fallback).
         dropped = 0
-        show_summary = True
-
-        def shrink() -> bool:
-            """Drop the oldest shown unit; as a last resort leave the summary out of this view
-            (it stays stored for later views). False when nothing more can go."""
-            nonlocal dropped, show_summary
-            candidates = [u for u in units[:-1] if states[u.index] not in ("dropped", "summarized")]
-            if candidates:
-                states[candidates[0].index] = "dropped"
-                dropped += 1
-            elif show_summary and self.summary and self.summary_covers:
-                show_summary = False
-                for u in units:  # absent from this view, so recorded as dropped
-                    if states[u.index] == "summarized":
-                        states[u.index] = "dropped"
-                events.append(
-                    ContextEvent("summary_omitted", {"summary_covers": self.summary_covers})
-                )
-            else:
-                return False
-            return True
-
         while estimated > cfg.budget:
-            if not shrink():
+            candidates = [u for u in units[:-1] if states[u.index] not in ("dropped", "summarized")]
+            if not candidates:
                 break
-            messages = self._assemble(task, units, rendered, states, show_summary)
+            states[candidates[0].index] = "dropped"
+            dropped += 1
+            messages = self._assemble(task, units, rendered, states)
             estimated, raw = self._estimate(system, tools, messages)
-        # Optional exact check (countTokens, D13): verify the fit, and drop further if needed.
-        exact = self.counter(system, tools, messages) if self.counter else None
-        while exact is not None and exact > cfg.budget:
-            self.estimator.observe(raw, estimated, exact)  # learn from the exact count
-            if not shrink():
-                break
-            messages = self._assemble(task, units, rendered, states, show_summary)
-            estimated, raw = self._estimate(system, tools, messages)
-            exact = self.counter(system, tools, messages)
         if dropped:
             kind = "drop" if self.strategy == "sliding_window" else "fallback"
             events.append(ContextEvent(kind, {"units_dropped": dropped}))
 
-        fits = (exact if exact is not None else estimated) <= cfg.budget
+        fits = estimated <= cfg.budget
         view = PromptView(
             messages=messages,
             estimated_tokens=estimated,
@@ -231,15 +200,13 @@ class ContextManager:
             units=states,
             clipped=clipped,
             events=events,
-            summary=self.summary if show_summary else None,
-            summary_covers=self.summary_covers if show_summary else 0,
+            summary=self.summary,
+            summary_covers=self.summary_covers,
             over_budget=not fits,
-            exact_tokens=exact,
         )
         if view.over_budget:
-            events.append(ContextEvent("overflow", {"estimated": estimated, "exact": exact}))
+            events.append(ContextEvent("overflow", {"estimated": estimated}))
             raise ContextOverflow(
                 f"pinned prefix + latest unit is ~{estimated} tokens > B={cfg.budget}"
-                " (with every older unit and any summary already left out)"
             )
         return view

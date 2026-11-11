@@ -22,8 +22,6 @@ CONTEXT_TYPES = {
     "clip": ("pruning", "truncate"),
     "drop": ("pruning", "truncate"),
     "fallback": ("pruning", "truncate"),
-    # llm_summary/hybrid last resort: the summary is left out of one prompt (tracked, D18).
-    "summary_omitted": ("pruning", "truncate"),
     "overflow": ("overflow", "none"),
 }
 SOURCES = {"system", "user", "agent"}

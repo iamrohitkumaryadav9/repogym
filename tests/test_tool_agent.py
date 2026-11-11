@@ -357,21 +357,6 @@ def test_waits_inside_a_bad_response_are_excluded_too():
     assert env.state().waiting_seconds >= 5_000.0
 
 
-def test_summary_omitted_events_are_counted_and_typed_in_the_trajectory():
-    from repogym.env.environment import EventRecord
-
-    env = run(agent([reply(("bash", {"command": "ls"})), reply(("submit", {}))]))
-    env.events.append(
-        EventRecord(after_step=1, at="x", kind="summary_omitted", detail={"summary_covers": 3})
-    )
-    acct = accounting.summarize(env.steps, env.events, "gemma-4-26b-a4b-it")
-    assert acct["summary_omitted"] == 1 and acct["summary_omitted_rate"] == 0.5
-    assert trajectory.CONTEXT_TYPES["summary_omitted"] == ("pruning", "truncate")
-
-
-# -- D19: reasoning, view description, step counter --------------------------------------------
-
-
 def test_progress_hook_sees_every_model_call():
     seen = []
     a = agent([reply(("bash", {"command": "ls"})), reply(text="hmm"), reply(("submit", {}))])
@@ -391,24 +376,6 @@ def test_replayed_thinking_is_counted_exactly_in_the_estimate():
     raw = est.raw("s", [], [thinking])
     est.observe(raw, est.estimate("s", [], [thinking]), int(raw) + 800, replay=800)
     assert est.factor == pytest.approx(1.0, abs=0.02)
-
-
-def test_preserved_thinking_share_of_prompt_and_budget():
-    calls = [
-        {"prompt_tokens": 1000, "budget": 12000, "view": {"replay_tokens": 0}},
-        {"prompt_tokens": 4000, "budget": 12000, "view": {"replay_tokens": 1000}},
-        {"prompt_tokens": 12000, "budget": 12000, "view": {"replay_tokens": 6000}},
-        {"prompt_tokens": None, "budget": 12000, "view": {"replay_tokens": 5}},  # skipped
-    ]
-    out = accounting.preserved_thinking(calls)
-    assert out["calls"] == 3 and out["calls_with_thinking"] == 2
-    assert out["share_of_prompt"] == {"mean": 0.25, "median": 0.25, "max": 0.5}
-    assert out["share_of_budget"]["max"] == 0.5 and out["tokens"]["max"] == 6000
-    assert accounting.preserved_thinking([]) == {"calls": 0}
-    env = run(agent([reply(("submit", {}))]))
-    acct = accounting.summarize(env.steps, env.events, "gemma-4-26b-a4b-it")
-    assert acct["preserved_thinking"]["calls"] == 1
-    assert acct["preserved_thinking"]["share_of_prompt"]["max"] == 0.0
 
 
 def test_a_call_held_across_the_quota_reset_keeps_the_episode_going():

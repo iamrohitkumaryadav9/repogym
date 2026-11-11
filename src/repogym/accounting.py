@@ -6,7 +6,6 @@ without a comparable list price (Gemma on this API), cost is None and only token
 
 from __future__ import annotations
 
-import collections
 from pathlib import Path
 
 import yaml
@@ -34,40 +33,6 @@ def call_cost(
 
 def _sum(calls: list[dict], key: str) -> int:
     return sum(c.get(key) or 0 for c in calls)
-
-
-def preserved_thinking(agent_calls: list[dict]) -> dict:
-    """How much of each prompt, and of B, was the model's own preserved thinking (D21).
-
-    Per agent call: the exact re-billed thinking in the view (``view.replay_tokens``) as a share
-    of the reported prompt and of the budget. Works on stored per-call records, so it can be
-    computed after the fact from any trajectory.
-    """
-    rows = []
-    for c in agent_calls:
-        replay = (c.get("view") or {}).get("replay_tokens")
-        prompt, budget = c.get("prompt_tokens"), c.get("budget")
-        if replay is None or not prompt or not budget:
-            continue
-        rows.append((replay, replay / prompt, replay / budget))
-    if not rows:
-        return {"calls": 0}
-
-    def stats(i: int) -> dict:
-        values = sorted(r[i] for r in rows)
-        return {
-            "mean": round(sum(values) / len(values), 4),
-            "median": round(values[len(values) // 2], 4),
-            "max": round(values[-1], 4),
-        }
-
-    return {
-        "calls": len(rows),
-        "calls_with_thinking": sum(r[0] > 0 for r in rows),
-        "tokens": {k: int(v) for k, v in stats(0).items()},
-        "share_of_prompt": stats(1),
-        "share_of_budget": stats(2),
-    }
 
 
 def summarize(steps, events, model: str | None, prices: dict | None = None) -> dict:
@@ -117,26 +82,11 @@ def summarize(steps, events, model: str | None, prices: dict | None = None) -> d
             else round(sum(costs), 6),
         }
 
-    omitted = sum(e.kind == "summary_omitted" for e in events)
-    kinds = collections.Counter(e.kind for e in events)
-    with_calls = sum(1 for c in agent_calls if c is not None)
     errors = [c["estimation_error"] for c in agent_calls if c.get("estimation_error") is not None]
     return {
         **totals(calls),
         "summary_overhead": totals(summary_calls),
         "budget_violations": sum(bool(c.get("budget_violation")) for c in agent_calls),
-        # The model's own preserved thinking as a share of each prompt and of B (D21, D22).
-        "preserved_thinking": preserved_thinking(agent_calls),
-        # Prompts that had to leave the stored summary out to fit B (D18); a validity signal.
-        "summary_omitted": omitted,
-        "summary_omitted_rate": round(omitted / len(agent_calls), 4) if agent_calls else None,
-        # Replies with a tool call but no reasoning text, and the reminders they caused (D19).
-        "missing_reasoning": kinds["missing_reasoning"],
-        "missing_reasoning_rate": round(kinds["missing_reasoning"] / with_calls, 4)
-        if with_calls
-        else None,
-        "reasoning_reminders": kinds["reasoning_reminder"],
-        "final_steps_nudges": kinds["final_steps_nudge"],
         "estimation_error_mean": round(sum(errors) / len(errors), 4) if errors else None,
         "estimation_error_max_under": round(min(errors), 4) if errors else None,
         "retries": sum(c.get("retries", 0) for c in calls),

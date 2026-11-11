@@ -179,18 +179,6 @@ def load(path: Path) -> Experiment:
     missing = [m for m in data["models"] if m not in all_settings]
     if missing:
         raise ExperimentError(f"models not in {models_file.name}: {missing}")
-    # Per-experiment overrides of pinned model settings (e.g. a thinking-level check, D22).
-    # They are part of model_settings, so they are hashed and recorded in every episode.
-    overrides = data.get("model_overrides") or {}
-    bad = sorted(set(overrides) - set(data["models"]))
-    if bad:
-        raise ExperimentError(f"model_overrides for models not in the experiment: {bad}")
-    all_settings = {m: {**v, **overrides.get(m, {})} for m, v in all_settings.items()}
-    counting = [
-        m for m in data["models"] if all_settings[m].get("token_counting", "estimate") != "estimate"
-    ]
-    if counting:  # D20: countTokens is for offline validation only, never in a timed run
-        raise ExperimentError(f"token_counting other than 'estimate' for {counting} (D20)")
     context = ContextConfig(**data.get("context", {}))
     budgets = Budgets(**data.get("budgets", {}))
     check_observation_caps(context, budgets)

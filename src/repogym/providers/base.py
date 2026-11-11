@@ -144,10 +144,6 @@ class ToolProvider(Protocol):
         self, system: str, prompt: str, max_tokens: int, estimated_tokens: int = 0
     ) -> Generation: ...
 
-    def count_tokens(
-        self, system: str, messages: list[Message], tools: list[dict]
-    ) -> int | None: ...
-
 
 def api_seconds(started: float, waited: float, attempts: list) -> float:
     """Wall time of the call minus limiter waits and retry backoff: time spent on the API."""

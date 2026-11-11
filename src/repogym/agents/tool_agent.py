@@ -115,7 +115,6 @@ def call_metrics(gen, view, budget: int, record: dict, wall: float | None = None
                 ],
                 "model_version": gen.model_version,
                 "estimated_tokens": view.estimated_tokens,
-                "exact_tokens": view.exact_tokens,
                 "budget": budget,
                 "budget_violation": bool(u.prompt_tokens and u.prompt_tokens > budget),
                 "estimation_error": record.get("error"),
@@ -217,7 +216,7 @@ class ToolAgent:
                     self.system_prompt,
                     view.messages,
                     TOOLS,
-                    estimated_tokens=view.exact_tokens or view.estimated_tokens,
+                    estimated_tokens=view.estimated_tokens,
                 )
             except BadResponse as exc:
                 env.record_wait(exc.wait_seconds)

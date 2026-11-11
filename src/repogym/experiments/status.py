@@ -83,16 +83,10 @@ def summary(
                 "budget_violations": sum(
                     (r.get("accounting") or {}).get("budget_violations", 0) for r in finals
                 ),
-                "summary_omitted": sum(
-                    (r.get("accounting") or {}).get("summary_omitted", 0) for r in finals
-                ),
                 "attempts": sum(len(v) for v in attempts.values()),
                 "cells_retried": sum(len(v) > 1 for v in attempts.values()),
                 "cells_given_up": sum(
                     counted_api_failures(v) >= MAX_API_FAILURES for v in attempts.values()
-                ),
-                "missing_reasoning": sum(
-                    (r.get("accounting") or {}).get("missing_reasoning", 0) for r in finals
                 ),
                 "worker": heartbeat(experiment, model, now),
                 "mean_episode_minutes": round(mean / 60, 1) if mean else None,

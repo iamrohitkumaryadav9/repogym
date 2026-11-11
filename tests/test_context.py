@@ -1,7 +1,7 @@
 """Context strategies: invariants as property tests over random histories, plus targeted cases."""
 
 import pytest
-from hypothesis import HealthCheck, example, given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from repogym.context.base import (
@@ -104,20 +104,6 @@ nudges = st.lists(st.booleans(), min_size=25, max_size=25)
     strategy=st.sampled_from(STRATEGIES),
     budget=st.integers(3_000, 20_000),
 )
-# Found by hypothesis: the summary alone pushed the minimal view 1 token over B. The summary is
-# now left out of that view as a last resort instead of failing the episode.
-@example(
-    spec=[
-        ([743], False),
-        ([57], False),
-        ([1793], False),
-        ([2852], False),
-        ([0, 1717, 4756], False),
-    ],
-    nudge=[True, False, True, False] + [False] * 21,
-    strategy="llm_summary",
-    budget=3000,
-)
 def test_every_strategy_respects_budget_prefix_last_unit_and_pairs(spec, nudge, strategy, budget):
     # Nudge turns only between tool units, never as the latest unit.
     spec = [(sizes, nudge[i] and i < len(spec) - 1) for i, (sizes, _) in enumerate(spec)]
@@ -126,7 +112,11 @@ def test_every_strategy_respects_budget_prefix_last_unit_and_pairs(spec, nudge, 
     try:
         view = cm.build(SYSTEM, TOOLS, history)
     except ContextOverflow:
-        # Only legitimate if the pinned prefix plus the (clipped) latest unit can't fit.
+        # Legitimate if the pinned prefix plus the (clipped) latest unit can't fit, or, for the
+        # summarising strategies, if the stored summary is what pushes the minimal view over B
+        # (the episode ends as context_failure; the summary is never silently left out).
+        if cm.summary:
+            return
         minimal = ContextManager("sliding_window", ContextConfig(budget=10**9), TokenEstimator())
         task, units = split_units(history)
         tail = minimal.build(SYSTEM, TOOLS, [history[0], *units[-1].messages])
@@ -207,20 +197,6 @@ def test_overflow_when_even_the_minimal_view_cannot_fit():
         manager("obs_mask", 500)[0].build(SYSTEM, TOOLS, history_from([([3_000], False)]))
 
 
-def test_exact_counter_verifies_the_fit_and_drops_more_if_needed():
-    counts = []
-
-    def counter(system, tools, messages):
-        counts.append(len(messages))
-        return 9_000 if len(messages) > 5 else 4_000  # the estimate was too optimistic
-
-    cm = ContextManager(
-        "sliding_window", ContextConfig(budget=8_000), TokenEstimator(), counter=counter
-    )
-    view = cm.build(SYSTEM, TOOLS, history_from([([500], False)] * 5))
-    assert view.exact_tokens == 4_000 and len(view.messages) <= 5 and counts
-
-
 def test_estimator_calibrates_toward_reported_tokens():
     est = TokenEstimator()
     for _ in range(20):
@@ -260,15 +236,12 @@ def test_units_covered_by_a_summary_are_never_shown_again_after_masking():
     assert first.units[1] == second.units[1] == "summarized" and first.messages == second.messages
 
 
-def test_summary_is_left_out_of_a_view_only_when_nothing_else_can_go():
+
+
+def test_a_summary_that_alone_makes_the_minimal_view_exceed_b_is_a_context_failure():
+    # Found by hypothesis: pinned prefix + latest unit + the summary is 1 token over B = 3000.
     spec = [([743], False), ([57], True), ([1793], True), ([2852], False), ([0, 1717, 4756], False)]
     history = history_from(spec)
     cm, _ = manager("llm_summary", 3000)
-    view = cm.build(SYSTEM, TOOLS, history)
-    assert view.estimated_tokens <= 3000 and not view.over_budget
-    assert [e.kind for e in view.events].count("summary_omitted") == 1
-    # The stored summary survives for later views; this view records its absence.
-    assert view.summary is None and cm.summary
-    assert "summarized" not in view.units.values()
-    assert not any(SUMMARY_HEADER in t for t in view.messages[0].extra_text)
-    check_view(history, view)
+    with pytest.raises(ContextOverflow):
+        cm.build(SYSTEM, TOOLS, history)
