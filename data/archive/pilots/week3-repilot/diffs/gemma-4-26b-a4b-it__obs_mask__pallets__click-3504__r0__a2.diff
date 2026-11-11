@@ -1,0 +1,253 @@
+diff --git a/repro.py b/repro.py
+new file mode 100644
+index 0000000..b0f2c52
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,60 @@
++
++import os
++
++class CompletionItem:
++    def __init__(self, type, value, help=None):
++        self.type = type
++        self.value = value
++        self.help = help
++
++class FishComplete:
++    def format_completion(self, item: CompletionItem) -> str:
++        help_ = item.help or "_"
++        value = item.value.replace("\n", r"\n")
++        help_escaped = help_.replace("\n", r"\n")
++        return f"{item.type}\n{value}\n{help_escaped}"
++
++def simulate_fish_completion(response_str):
++    # This simulates the fish script logic
++    # for completion in $response;
++    #     set -l metadata (string split \n $completion);
++    #     ...
++    # end
++    
++    # In fish, 'for completion in $response' splits by whitespace.
++    # We'll use .split() which is similar to fish's default behavior for unquoted variables.
++    completions = response_str.split()
++    
++    for completion in completions:
++        # set -l metadata (string split \n $completion);
++        # In fish, string split \n $completion where $completion has no \n is just $completion
++        metadata = completion.split('\n')
++        
++        print(f"DEBUG: completion='{completion}'")
++        print(f"DEBUG: metadata={metadata}")
++        
++        if len(metadata) > 0:
++            m1 = metadata[0]
++            print(f"DEBUG: m1='{m1}'")
++            if m1 == "dir":
++                pass
++            elif m1 == "file":
++                pass
++            elif m1 == "plain":
++                if len(metadata) > 2:
++                    m2 = metadata[1]
++                    m3 = metadata[2]
++                    print(f"DEBUG: m2='{m2}', m3='{m3}'")
++                else:
++                    print("DEBUG: metadata too short for plain")
++            else:
++                print(f"DEBUG: unknown type '{m1}'")
++
++if __name__ == "__main__":
++    item = CompletionItem("plain", "--at", "Attachment with explicit mimetype,\n--at image.jpg image/jpeg")
++    fc = FishComplete()
++    response = fc.format_completion(item)
++    print("--- Response ---")
++    print(response)
++    print("--- Simulation ---")
++    simulate_fish_completion(response)
+diff --git a/reproduce_cmd.py b/reproduce_cmd.py
+new file mode 100644
+index 0000000..2f98f1b
+--- /dev/null
++++ b/reproduce_cmd.py
+@@ -0,0 +1,16 @@
++import click
++
++@click.command()
++@click.option(
++    "attachment_types",
++    "--at",
++    "--attachment-type",
++    type=(str, str),
++    multiple=True,
++    help="\b\nAttachment with explicit mimetype,\n--at image.jpg image/jpeg",
++)
++def run_test_cmd(attachment_types):
++    pass
++
++if __name__ == "__main__":
++    run_test_cmd()
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..7ca2867
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,38 @@
++
++import click
++import os
++from click.shell_completion import FishComplete, CompletionItem
++
++@click.command()
++@click.option(
++    "attachment_types",
++    "--at",
++    "--attachment-type",
++    type=(str, str),
++    multiple=True,
++    help="\nAttachment with explicit mimetype,\n--at image.jpg image/jpeg",
++)
++def test_cmd(attachment_types):
++    pass
++
++def reproduce():
++    # Mocking the environment for fish completion
++    os.environ["COMP_WORDS"] = "llm --"
++    os.environ["COMP_CWORD"] = "--"
++    os.environ["_LLM_COMPLETE"] = "fish_complete"
++
++    # We want to see what FishComplete.format_completion produces for the '--at' option
++    # In a real click completion, click will find the option and create CompletionItem
++    
++    # For the purpose of reproduction, let's manually create CompletionItem
++    item = CompletionItem(type="plain", value="--at", help="Attachment with explicit mimetype,\n--at image.jpg image/jpeg")
++    
++    fc = FishComplete()
++    result = fc.format_completion(item)
++    print("FishComplete.format_completion result:")
++    print(repr(result))
++    print("FishComplete.format_completion result (as string):")
++    print(result)
++
++if __name__ == "__main__":
++    reproduce()
+diff --git a/test_click_completion.py b/test_click_completion.py
+new file mode 100644
+index 0000000..719e2db
+--- /dev/null
++++ b/test_click_completion.py
+@@ -0,0 +1,93 @@
++import os
++import sys
++import click
++
++# Add src to sys.path
++sys.path.insert(0, os.path.abspath("src"))
++
++@click.command()
++@click.option(
++    "attachment_types",
++    "--at",
++    "--attachment-type",
++    type=(str, str),
++    multiple=True,
++    help="\b\nAttachment with explicit mimetype,\n--at image.jpg image/jpeg",
++)
++def test_cmd(attachment_types):
++    pass
++
++if __name__ == "__main__":
++    # The click shell completion is triggered when _CLICK_COMPLETE is set.
++    # Wait, is it _CLICK_COMPLETE or _LLM_COMPLETE?
++    # The issue says _LLM_COMPLETE=fish_complete.
++    # The llm tool likely uses click's completion but sets its own env var.
++    
++    # Let's see if click uses _CLICK_COMPLETE.
++    # In src/click/shell_completion.py, I don't see it.
++    
++    # Let's try to manually call the completion logic.
++    from click.shell_completion import get_completion_class
++    
++    shell = os.environ.get("_LLM_COMPLETE")
++    if shell:
++        # How does click actually handle the completion?
++        # It seems it's done in the command's invocation.
++        # If the command is invoked with _CLICK_COMPLETE set.
++        
++        # Let's try setting _CLICK_COMPLETE.
++        os.environ["_CLICK_COMPLETE"] = shell
++        
++        # Now we need to set COMP_WORDS and COMP_CWORD.
++        # If COMP_CWORD is a string, we'll use it. If it's an int, we'll use it.
++        # In the issue, it was COMP_CWORD='--'
++        
++        # Let's try to call the command.
++        # We need to pass the arguments as if they were being typed.
++        # If we are completing '--', then the arguments are ['test_cmd', '--']
++        # and the current word index is 1.
++        
++        # Actually, click's shell completion logic is usually integrated into the command.
++        # Let's see where it's called.
++        pass
++    
++    # Instead of trying to guess, let's look at how click.Command.invoke handles it.
++    # I'll just use the current click installed and try to see if it works.
++    # Wait, I'm already in the repo.
++    
++    # Let's try a simpler approach.
++    # I'll write a script that uses click.get_completion_class and manually calls it.
++    # But I don't know how to get the CompletionItems.
++    
++    # Let's try to use the command itself.
++    # If I call the command with _CLICK_COMPLETE set, it should work.
++    
++    if "_CLICK_COMPLETE" in os.environ:
++        # Mocking COMP_WORDS and COMP_CWORD
++        # COMP_WORDS is a space separated string in some shells.
++        # In click, it's expected to be available.
++        
++        # Let's try setting them.
++        if "COMP_WORDS" in os.environ:
++            # split COMP_WORDS into list
++            words = os.environ["COMP_WORDS"].split()
++            # The issue says: COMP_WORDS='llm --'
++            # So words = ['llm', '--']
++            # COMP_CWORD='--'
++            # This is very strange. Usually COMP_CWORD is the index.
++            # Let's try to see if we can find what index '--' is.
++            try:
++                cword_idx = words.index(os.environ["COMP_CWORD"])
++            except ValueError:
++                cword_idx = len(words) - 1
++            
++            # In fish, it might be different.
++            # Let's try to run the command with these env vars.
++            import subprocess
++            # We need to call the command itself.
++            # We'll use the current script.
++            # Wait, I'll use 'test_cmd.py' if I create it.
++            
++            # Let's just use a subprocess to call the command.
++            # I'll create test_cmd.py first.
++            pass
+diff --git a/test_cmd.py b/test_cmd.py
+new file mode 100644
+index 0000000..dcec46f
+--- /dev/null
++++ b/test_cmd.py
+@@ -0,0 +1,16 @@
++import click
++
++@click.command()
++@click.option(
++    "attachment_types",
++    "--at",
++    "--attachment-type",
++    type=(str, str),
++    multiple=True,
++    help="\b\nAttachment with explicit mimetype,\n--at image.jpg image/jpeg",
++)
++def test_cmd(attachment_types):
++    pass
++
++if __name__ == "__main__":
++    test_cmd()

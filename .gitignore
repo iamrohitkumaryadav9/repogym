@@ -22,6 +22,3 @@ data/runs/clean3-all-oracle/diffs/
 
 # Week 3: the persistent daily quota ledger (local state, D11)
 data/quota/
-
-# Week 3: PID files and logs of running jobs (RUNBOOK)
-data/jobs/

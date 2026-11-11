@@ -1,0 +1,79 @@
+diff --git a/src/click/shell_completion.py b/src/click/shell_completion.py
+index b01e290..46e27eb 100644
+--- a/src/click/shell_completion.py
++++ b/src/click/shell_completion.py
+@@ -177,11 +177,14 @@ fi
+ 
+ _SOURCE_FISH = """\
+ function %(complete_func)s;
+-    set -l response (env %(complete_var)s=fish_complete COMP_WORDS=(commandline -cp) \
+-COMP_CWORD=(commandline -t) %(prog_name)s);
++    set -l response
++    env %(complete_var)s=fish_complete COMP_WORDS=(commandline -cp) \
++COMP_CWORD=(commandline -t) %(prog_name)s | while read -l line;
++        set response $response $line;
++    end;
+ 
+     for completion in $response;
+-        set -l metadata (string split \n $completion);
++        set -l metadata (string split \x1f $completion);
+ 
+         if test $metadata[1] = "dir";
+             __fish_complete_directories $metadata[2];
+@@ -435,7 +438,7 @@ class FishComplete(ShellComplete):
+         help_ = item.help or "_"
+         value = item.value.replace("\n", r"\n")
+         help_escaped = help_.replace("\n", r"\n")
+-        return f"{item.type}\n{value}\n{help_escaped}"
++        return f"{item.type}\x1f{value}\x1f{help_escaped}"
+ 
+ 
+ ShellCompleteType = t.TypeVar("ShellCompleteType", bound="type[ShellComplete]")
+diff --git a/test_repro.py b/test_repro.py
+new file mode 100644
+index 0000000..7ceb9e3
+--- /dev/null
++++ b/test_repro.py
+@@ -0,0 +1,12 @@
++
++from click.shell_completion import CompletionItem, FishComplete
++
++def test_fish_output():
++    comp = FishComplete(None, {}, "llm", "_LLM_COMPLETE")
++    item = CompletionItem("--at", "plain", "Attachment with explicit mimetype,\n--at image.jpg image/jpeg")
++    # FishComplete format_completion uses item.value and item.help.
++    # The order of arguments to CompletionItem constructor is (value, help, type)
++    # Wait, let me check CompletionItem constructor.
++    print(f"Output: {comp.format_completion(item)!r}")
++
++test_fish_output()
+diff --git a/test_repro_debug.py b/test_repro_debug.py
+new file mode 100644
+index 0000000..93174f2
+--- /dev/null
++++ b/test_repro_debug.py
+@@ -0,0 +1,24 @@
++
++from click.shell_completion import CompletionItem
++from click.testing import CliRunner
++import click
++
++def test_repro():
++    item = CompletionItem(
++        "at",
++        "plain",
++        help="\b\nAttachment with explicit mimetype,\n--at image.jpg image/jpeg",
++    )
++    
++    print(f"item.help repr: {repr(item.help)}")
++    
++    help_ = item.help or "_"
++    value = item.value.replace("\n", r"\n")
++    help_escaped = help_.replace("\n", r"\n")
++    
++    print(f"help_escaped repr: {repr(help_escaped)}")
++    
++    output = f"{item.type}\n{value}\n{help_escaped}"
++    print(f"output repr: {repr(output)}")
++
++test_repro()

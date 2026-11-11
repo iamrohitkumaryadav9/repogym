@@ -480,5 +480,3 @@ def test_a_daily_429_also_pauses_but_only_once_per_call():
     with pytest.raises(DailyQuotaExhausted):
         retry(lambda: Outcome(False, 429, body=body), without, on_daily=lambda: without.t + 100)
     assert without.sleeps == []  # pausing is off by default
-
-

@@ -1,0 +1,141 @@
+diff --git a/src/attr/validators.py b/src/attr/validators.py
+index 1559557..9fce98f 100644
+--- a/src/attr/validators.py
++++ b/src/attr/validators.py
+@@ -378,8 +378,8 @@ def deep_iterable(member_validator, iterable_validator=None):
+ 
+ @attrs(repr=False, slots=True, unsafe_hash=True)
+ class _DeepMapping:
+-    key_validator = attrib(validator=is_callable())
+-    value_validator = attrib(validator=is_callable())
++    key_validator = attrib(default=None, validator=optional(is_callable()))
++    value_validator = attrib(default=None, validator=optional(is_callable()))
+     mapping_validator = attrib(default=None, validator=optional(is_callable()))
+ 
+     def __call__(self, inst, attr, value):
+@@ -389,22 +389,30 @@ class _DeepMapping:
+         if self.mapping_validator is not None:
+             self.mapping_validator(inst, attr, value)
+ 
+-        for key in value:
+-            self.key_validator(inst, attr, key)
+-            self.value_validator(inst, attr, value[key])
++        for key, val in value.items():
++            if self.key_validator is not None:
++                self.key_validator(inst, attr, key)
++            if self.value_validator is not None:
++                self.value_validator(inst, attr, val)
+ 
+     def __repr__(self):
++        if self.key_validator is None:
++            return f"<deep_mapping validator for objects mapping to {self.value_validator!r}>"
++        if self.value_validator is None:
++            return f"<deep_mapping validator for objects mapping {self.key_validator!r}>"
+         return f"<deep_mapping validator for objects mapping {self.key_validator!r} to {self.value_validator!r}>"
+ 
+ 
+-def deep_mapping(key_validator, value_validator, mapping_validator=None):
++def deep_mapping(
++    key_validator=None, value_validator=None, mapping_validator=None
++):
+     """
+     A validator that performs deep validation of a dictionary.
+ 
+     Args:
+-        key_validator: Validator to apply to dictionary keys.
++        key_validator: Validator to apply to dictionary keys (optional).
+ 
+-        value_validator: Validator to apply to dictionary values.
++        value_validator: Validator to apply to dictionary values (optional).
+ 
+         mapping_validator:
+             Validator to apply to top-level mapping attribute (optional).
+@@ -413,7 +421,16 @@ def deep_mapping(key_validator, value_validator, mapping_validator=None):
+ 
+     Raises:
+         TypeError: if any sub-validators fail
+-    """
++        ValueError: if neither key_validator nor value_validator is provided
++    """
++    if isinstance(key_validator, (list, tuple)):
++        key_validator = and_(*key_validator)
++    if isinstance(value_validator, (list, tuple)):
++        value_validator = and_(*value_validator)
++    if key_validator is None and value_validator is None:
++        raise ValueError(
++            "Must provide at least one of key_validator or value_validator"
++        )
+     return _DeepMapping(key_validator, value_validator, mapping_validator)
+ 
+ 
+diff --git a/src/attr/validators.pyi b/src/attr/validators.pyi
+index a0fdda7..4e91a2c 100644
+--- a/src/attr/validators.pyi
++++ b/src/attr/validators.pyi
+@@ -66,8 +66,8 @@ def deep_iterable(
+     iterable_validator: _ValidatorType[_I] | None = ...,
+ ) -> _ValidatorType[_I]: ...
+ def deep_mapping(
+-    key_validator: _ValidatorType[_K],
+-    value_validator: _ValidatorType[_V],
++    key_validator: _ValidatorArgType[_K] | None = ...,
++    value_validator: _ValidatorArgType[_V] | None = ...,
+     mapping_validator: _ValidatorType[_M] | None = ...,
+ ) -> _ValidatorType[_M]: ...
+ def is_callable() -> _ValidatorType[_T]: ...
+diff --git a/tests/test_validators.py b/tests/test_validators.py
+index 45e7050..2098755 100644
+--- a/tests/test_validators.py
++++ b/tests/test_validators.py
+@@ -721,6 +721,51 @@ class TestDeepMapping:
+         )
+         assert expected_repr == repr(v)
+ 
++        v_no_key = deep_mapping(value_validator=value_validator)
++        expected_repr_no_key = (
++            "<deep_mapping validator for objects mapping to "
++            f"{value_repr}>"
++        )
++        assert expected_repr_no_key == repr(v_no_key)
++
++        v_no_val = deep_mapping(key_validator=key_validator)
++        expected_repr_no_val = (
++            "<deep_mapping validator for objects mapping "
++            f"{key_repr}>"
++        )
++        assert expected_repr_no_val == repr(v_no_val)
++
++    def test_optional_validators(self):
++        """
++        Either key_validator or value_validator can be omitted.
++        """
++        a = simple_attr("test")
++
++        # Only key_validator provided
++        v_keys = deep_mapping(key_validator=instance_of(str))
++        v_keys(None, a, {"a": 6, "b": 7})
++        with pytest.raises(TypeError):
++            v_keys(None, a, {42: 6})
++
++        # Only value_validator provided
++        v_vals = deep_mapping(value_validator=instance_of(int))
++        v_vals(None, a, {"a": 6, "b": 7})
++        with pytest.raises(TypeError):
++            v_vals(None, a, {"a": "6"})
++
++        # List/tuple validators supported
++        v_list = deep_mapping(
++            key_validator=[instance_of(str), min_len(1)],
++            value_validator=[instance_of(int)],
++        )
++        v_list(None, a, {"a": 6})
++        with pytest.raises(ValueError):
++            v_list(None, a, {"": 6})
++
++        # Neither provided raises ValueError
++        with pytest.raises(ValueError):
++            deep_mapping()
++
+ 
+ class TestIsCallable:
+     """

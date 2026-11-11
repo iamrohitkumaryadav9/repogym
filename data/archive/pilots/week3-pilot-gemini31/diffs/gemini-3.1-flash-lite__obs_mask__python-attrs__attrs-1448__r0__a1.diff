@@ -1,0 +1,194 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..f4436b1
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,70 @@
++from attr import define, field
++from attr.validators import deep_mapping, instance_of, min_len, and_
++from typing import Dict, Any
++
++# This should still work
++@define
++class B:
++    x: Dict[str, Any] = field(
++        validator=deep_mapping(
++            key_validator=and_(instance_of(str), min_len(1)),
++            value_validator=lambda *x: None,
++        )
++    )
++
++# The user wants to do this now (only validating keys)
++try:
++    @define
++    class C:
++        x: Dict[str, Any] = field(
++            validator=deep_mapping(
++                key_validator=and_(instance_of(str), min_len(1)),
++            )
++        )
++    print("Successfully defined C")
++except Exception as e:
++    print(f"Failed to define C: {e}")
++
++# The user wants to do this now (only validating values)
++try:
++    @define
++    class D:
++        x: Dict[str, Any] = field(
++            validator=deep_mapping(
++                value_validator=instance_of(int),
++            )
++        )
++    print("Successfully defined D")
++except Exception as e:
++    print(f"Failed to define D: {e}")
++    
++# This should fail
++try:
++    @define
++    class E:
++        x: Dict[str, Any] = field(
++            validator=deep_mapping()
++        )
++    print("Successfully defined E (should not happen)")
++except Exception as e:
++    print(f"Failed to define E (expected): {e}")
++
++# Verify functionality
++b = B(x={"a": 1})
++print(f"B: {b}")
++
++c = C(x={"a": 1, "b": 2})
++print(f"C: {c}")
++
++d = D(x={"a": 1, "b": 2})
++print(f"D: {d}")
++
++try:
++    C(x={1: 1}) # Should fail validation
++except Exception as e:
++    print(f"Validation failed as expected for C: {e}")
++
++try:
++    D(x={"a": "string"}) # Should fail validation
++except Exception as e:
++    print(f"Validation failed as expected for D: {e}")
+diff --git a/src/attr/validators.py b/src/attr/validators.py
+index 1559557..e1ad2dd 100644
+--- a/src/attr/validators.py
++++ b/src/attr/validators.py
+@@ -378,8 +378,8 @@ def deep_iterable(member_validator, iterable_validator=None):
+ 
+ @attrs(repr=False, slots=True, unsafe_hash=True)
+ class _DeepMapping:
+-    key_validator = attrib(validator=is_callable())
+-    value_validator = attrib(validator=is_callable())
++    key_validator = attrib(default=None, validator=optional(is_callable()))
++    value_validator = attrib(default=None, validator=optional(is_callable()))
+     mapping_validator = attrib(default=None, validator=optional(is_callable()))
+ 
+     def __call__(self, inst, attr, value):
+@@ -389,22 +389,24 @@ class _DeepMapping:
+         if self.mapping_validator is not None:
+             self.mapping_validator(inst, attr, value)
+ 
+-        for key in value:
+-            self.key_validator(inst, attr, key)
+-            self.value_validator(inst, attr, value[key])
++        for key, val in value.items():
++            if self.key_validator is not None:
++                self.key_validator(inst, attr, key)
++            if self.value_validator is not None:
++                self.value_validator(inst, attr, val)
+ 
+     def __repr__(self):
+         return f"<deep_mapping validator for objects mapping {self.key_validator!r} to {self.value_validator!r}>"
+ 
+ 
+-def deep_mapping(key_validator, value_validator, mapping_validator=None):
++def deep_mapping(key_validator=None, value_validator=None, mapping_validator=None):
+     """
+     A validator that performs deep validation of a dictionary.
+ 
+     Args:
+-        key_validator: Validator to apply to dictionary keys.
++        key_validator: Validator to apply to dictionary keys (optional).
+ 
+-        value_validator: Validator to apply to dictionary values.
++        value_validator: Validator to apply to dictionary values (optional).
+ 
+         mapping_validator:
+             Validator to apply to top-level mapping attribute (optional).
+@@ -414,7 +416,15 @@ def deep_mapping(key_validator, value_validator, mapping_validator=None):
+     Raises:
+         TypeError: if any sub-validators fail
+     """
+-    return _DeepMapping(key_validator, value_validator, mapping_validator)
++    if key_validator is None and value_validator is None:
++        raise ValueError(
++            "At least one of key_validator or value_validator must be provided."
++        )
++    return _DeepMapping(
++        key_validator=key_validator,
++        value_validator=value_validator,
++        mapping_validator=mapping_validator,
++    )
+ 
+ 
+ @attrs(repr=False, frozen=True, slots=True)
+diff --git a/tests/test_deep_mapping_optional.py b/tests/test_deep_mapping_optional.py
+new file mode 100644
+index 0000000..eaf8568
+--- /dev/null
++++ b/tests/test_deep_mapping_optional.py
+@@ -0,0 +1,49 @@
++import pytest
++from attr.validators import deep_mapping, instance_of
++from attr import define, field, Attribute
++
++dummy_attr = Attribute(
++    name="dummy",
++    default=None,
++    validator=None,
++    repr=True,
++    cmp=True,
++    hash=None,
++    init=True,
++    kw_only=False,
++    converter=None,
++    metadata=None,
++    type=None,
++    inherited=False,
++    on_setattr=None,
++)
++
++def test_optional_validators():
++    # Only key validator
++    v_key = deep_mapping(key_validator=instance_of(str))
++    v_key(None, dummy_attr, {"a": 1, "b": 2})
++    with pytest.raises(TypeError):
++        v_key(None, dummy_attr, {1: 1})
++    
++    # Only value validator
++    v_val = deep_mapping(value_validator=instance_of(int))
++    v_val(None, dummy_attr, {"a": 1, "b": 2})
++    with pytest.raises(TypeError):
++        v_val(None, dummy_attr, {"a": "string"})
++        
++    # Both missing
++    with pytest.raises(ValueError):
++        deep_mapping()
++
++def test_repr_optional():
++    # Only key validator
++    key_validator = instance_of(str)
++    v = deep_mapping(key_validator=key_validator)
++    expected_repr = f"<deep_mapping validator for objects mapping {key_validator!r} to None>"
++    assert expected_repr == repr(v)
++    
++    # Only value validator
++    value_validator = instance_of(int)
++    v = deep_mapping(value_validator=value_validator)
++    expected_repr = f"<deep_mapping validator for objects mapping None to {value_validator!r}>"
++    assert expected_repr == repr(v)

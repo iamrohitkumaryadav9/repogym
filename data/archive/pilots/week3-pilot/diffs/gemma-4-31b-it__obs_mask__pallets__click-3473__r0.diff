@@ -1,0 +1,15 @@
+diff --git a/repro.py b/repro.py
+new file mode 100644
+index 0000000..50e9b35
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,9 @@
++import click
++
++@click.command()
++@click.argument('name', foo='bar')
++def hello(name):
++    print(f"Hello {name}")
++
++if __name__ == "__main__":
++    hello()

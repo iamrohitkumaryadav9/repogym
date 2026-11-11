@@ -1,0 +1,21 @@
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index 75e0901..002a52d 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -1006,14 +1006,12 @@ class OutOfOrderTableProxy(_CustomDict):  # type: ignore[type-arg]
+                 for k, v in _item.value.body:
+                     merged = self._merge_aot_fragment(k, v)
+                     if merged is None:
+-                        self._internal_container._raw_append(k, v)
+-                    else:
+-                        v = merged
++                        self._internal_container.append(k, copy.deepcopy(v))
+                     key_indices = self._tables_map.setdefault(k, [])  # type: ignore[arg-type]
+                     if table_idx not in key_indices:
+                         key_indices.append(table_idx)
+                     if k is not None:
+-                        dict.__setitem__(self, k.key, v)
++                        dict.__setitem__(self, k.key, self._internal_container[k.key])
+ 
+         self._internal_container._validate_out_of_order_table()
+ 

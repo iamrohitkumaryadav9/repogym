@@ -236,8 +236,6 @@ def test_units_covered_by_a_summary_are_never_shown_again_after_masking():
     assert first.units[1] == second.units[1] == "summarized" and first.messages == second.messages
 
 
-
-
 def test_a_summary_that_alone_makes_the_minimal_view_exceed_b_is_a_context_failure():
     # Found by hypothesis: pinned prefix + latest unit + the summary is 1 token over B = 3000.
     spec = [([743], False), ([57], True), ([1793], True), ([2852], False), ([0, 1717, 4756], False)]

@@ -1,0 +1,45 @@
+diff --git a/repro.py b/repro.py
+new file mode 100644
+index 0000000..8b033fb
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,9 @@
++import click
++
++@click.command()
++@click.argument('name', help='The name to print')
++def hello(name):
++    click.echo(f"Hello {name}!")
++
++if __name__ == "__main__":
++    hello()
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..1526cec
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,24 @@
++import click
++import pytest
++
++@click.command()
++@click.argument('name', help='The name to print')
++@click.option('--count', default=1, help='number of greetings')
++def hello(name: str, count: int):
++    """This script prints hello and a name one or more times."""
++    for x in range(count):
++        if name:
++            click.echo(f"Hello {name}!")
++        else:
++            click.echo("Hello!")
++
++def test_help(capsys):
++    from click.testing import CliRunner
++    runner = CliRunner()
++    result = runner.invoke(hello, ['--help'])
++    assert result.exit_code == 0
++    assert 'The name to print' in result.output
++    assert 'number of greetings' in result.output
++
++if __name__ == '__main__':
++    test_help()

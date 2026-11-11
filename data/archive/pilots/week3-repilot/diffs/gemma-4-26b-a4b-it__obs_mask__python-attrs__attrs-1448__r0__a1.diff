@@ -1,0 +1,26 @@
+diff --git a/repro.py b/repro.py
+new file mode 100644
+index 0000000..f8b949a
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,20 @@
++from attrs import define, field, deep_mapping
++from typing import Dict, Any
++
++@define
++class B:
++    x: Dict[str, Any] = field(
++        validator=deep_mapping(
++            key_validator=lambda k: True,
++            # value_validator is missing
++        )
++    )
++
++if __name__ == "__main__":
++    try:
++        b = B(x={"a": 1})
++        print("Success!")
++    except TypeError as e:
++        print(f"Caught expected TypeError: {e}")
++    except Exception as e:
++        print(f"Caught unexpected exception: {type(e).__name__}: {e}")

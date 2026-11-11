@@ -1,0 +1,32 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..4111b16
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,26 @@
++import tomlkit
++
++a = tomlkit.parse("""
++a.b.c = "d"
++a.b.e = "f"
++""")
++print(f"a type: {type(a)}")
++print(f"a _body: {a._body}")
++for i, item in enumerate(a._body):
++    print(f"item {i}: {item}")
++
++print(f"a keys: {list(a.keys())}")
++
++value = a["a"]
++print(f"value type: {type(value)}")
++print(f"value _internal_container._body: {value._internal_container._body}")
++for i, item in enumerate(value._internal_container._body):
++    print(f"item {i}: {item}")
++
++expected = {"b": {"c": "d", "e": "f"}}
++print(f"expected: {expected}")
++print(f"value repr: {repr(value)}")
++print(f"expected repr: {repr(expected)}")
++
++assert value == expected
++assert repr(value) == repr(expected)

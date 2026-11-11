@@ -13,7 +13,7 @@ from repogym.experiments.runner import Runner, cell_done, latest_records
 from repogym.experiments.spec import ExperimentError, load, max_clip_chars, sha256_bytes
 from repogym.experiments.status import summary
 from repogym.harness import EpisodeRecord, _finish
-from repogym.ratelimit import LimitsConfig, QuotaLedger
+from repogym.ratelimit import QuotaLedger
 
 DEV = ["python-attrs__attrs-1448", "pallets__click-3504"]
 TEST = ["python-attrs__attrs-1457"]
@@ -353,9 +353,16 @@ def test_episode_files_are_never_overwritten(tmp_path):
     assert unique_stem(tmp_path, "other") == "other__dup2"
 
 
-def test_the_committed_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp_path):
-    pilot = load(Path(__file__).parents[1] / "configs" / "experiments" / "pilot.yaml")
-    assert pilot.kind == "pilot" and pilot.split == "dev" and len(pilot.cells()) == 9
+def test_a_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp_path):
+    pilot = write_exp(
+        tmp_path,
+        budgets={
+            "max_steps": 75,
+            "max_elapsed_seconds": 6 * 3600,
+            "max_observation_chars": 200_000,
+        },
+    )
+    assert pilot.kind == "pilot" and pilot.split == "dev" and len(pilot.cells()) == 4
     assert pilot.budgets.max_elapsed_seconds == 6 * 3600 and pilot.budgets.max_steps == 75
     check(pilot, tmp_path / "none.md", tmp_path, final=False)  # allowed as is
     pilot.task_ids = [*pilot.task_ids, TEST[0]]
@@ -365,14 +372,6 @@ def test_the_committed_pilot_is_dev_only_and_the_guard_refuses_any_test_task(tmp
         check(pilot, tmp_path / "none.md", tmp_path, final=True)
 
 
-def test_the_repilot_is_dev_only_on_new_tasks(tmp_path):
-    root = Path(__file__).parents[1] / "configs" / "experiments"
-    first, second = load(root / "pilot.yaml"), load(root / "repilot.yaml")
-    assert second.kind == "pilot" and second.split == "dev" and len(second.cells()) == 6
-    assert not set(first.task_ids) & set(second.task_ids)
-    check(second, tmp_path / "none.md", tmp_path, final=False)
-
-
 def test_retry_policy_is_hashed_and_holds_the_daily_quota(tmp_path):
     exp = write_exp(tmp_path)
     r = exp.resolved()["retry"]
@@ -380,17 +379,6 @@ def test_retry_policy_is_hashed_and_holds_the_daily_quota(tmp_path):
     changed = write_exp(tmp_path, retry={"max_attempts": 4})
     assert changed.retry.max_attempts == 4 and changed.retry.pause_on_daily is True
     assert changed.resolved_sha256 != exp.resolved_sha256
-
-
-def test_the_gemini31_pilot_matches_the_repilot_tasks_at_high_thinking(tmp_path):
-    root = Path(__file__).parents[1] / "configs" / "experiments"
-    g31, repilot = load(root / "pilot_gemini31.yaml"), load(root / "repilot.yaml")
-    assert g31.kind == "pilot" and g31.models == ["gemini-3.1-flash-lite"]
-    assert g31.task_ids == repilot.task_ids
-    assert g31.model_settings["gemini-3.1-flash-lite"]["thinking_level"] == "high"
-    check(g31, tmp_path / "none.md", tmp_path, final=False)
-    limits = LimitsConfig.load(g31.limits_path).effective("gemini-3.1-flash-lite")
-    assert limits == {"rpm": 13, "tpm": 225000, "rpd": 450}
 
 
 def test_records_being_written_by_another_process_are_skipped_not_fatal(tmp_path):
