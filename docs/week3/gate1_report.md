@@ -269,11 +269,24 @@ The data is all 4 finished episodes plus 31B's surviving trajectory
 * My 4 thinking-removal runs on 26B saw intermittent 500s too (1–3 per run), always recovered.
   So 26B isn't immune, just far less affected.
 
-### 6.2 Reliability probe (in progress)
+### 6.2 Reliability probe (finished)
 
-* 20 single-attempt calls, one every 36 min, from 13:04 UTC; results in
-  `docs/week3/evidence/reliability_gemma-4-31b-it.jsonl`.
-* Call 1 (13:03:59): HTTP 500 after 1.1 s. The results come to Gate 2.
+* **Design:** 20 single-attempt calls to `gemma-4-31b-it` (a tiny prompt, 256 output tokens, no
+  retries), one every 36 minutes, from 13:03 UTC on 9 November to 00:27 UTC on 10 November.
+  Results are in `docs/week3/evidence/reliability_gemma-4-31b-it.jsonl`.
+* **Result: 8 of 20 calls succeeded (40%).** 12 failed: 9 with HTTP 500 and 3 with HTTP 503.
+  * **By time (UTC):** 13:00–18:00 had 6 failures in 9 calls, 18:00–24:00 had 6 in 10 calls,
+    and the last call, at 00:27, succeeded.
+  * **Streaks:** the longest run of consecutive failures was 4 calls, about 2.5 hours.
+  * **Latency** was high even when it worked: successful calls took 15–36 s (median 19 s) to
+    answer a one-word prompt. Failures came in two kinds: instant 500s (1–1.5 s, five of them)
+    and slow ones (23–56 s).
+* **What it means:** this is a service-side problem that lasts across hours. It isn't a quota
+  effect (one call per 36 minutes is far under every limit) and it isn't load from our other
+  runs. At a 60% single-attempt failure rate, the in-place retry rule (D16) makes a 75-step
+  episode very slow, and a 20% cell-failure exclusion threshold is likely to be exceeded.
+* **Caveat:** one day, one project. The overnight hours had no better rate than the afternoon,
+  but this doesn't show how it behaves on other days.
 
 ### 6.2b Candidate replacement: gemini-3.1-flash-lite (pilot pending)
 
